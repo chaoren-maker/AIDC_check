@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPU 服务器巡检</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="tech-bg text-slate-100 min-h-screen">
+  <div class="grid-bg fixed inset-0 pointer-events-none"></div>
+  <div class="relative z-10 min-h-screen lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
+    <aside class="glass-card border-r border-cyan-400/20 p-5 lg:p-6">
+      <div class="mb-6">
+        <h1 class="text-2xl font-black tracking-wide">GPU 巡检控制台</h1>
+        <p class="text-xs text-slate-400 mt-1">Remote Host Inspection • Dark Ops Theme</p>
+      </div>
+
+      <div class="mb-4 p-3 rounded-xl border border-cyan-400/20 bg-slate-900/50">
+        <div class="text-xs text-slate-400">当前选择主机</div>
+        <div id="selected-host-badge" class="mt-1 font-mono text-cyan-300">未选择</div>
+      </div>
+
+      <nav class="space-y-2" id="side-nav">
+        <button class="panel-switch" data-panel="import">导入 Excel</button>
+        <button class="panel-switch" data-panel="hosts">主机列表</button>
+        <button class="panel-switch" data-panel="numa">NUMA 拓扑</button>
+        <button class="panel-switch" data-panel="versions">版本信息</button>
+        <button class="panel-switch" data-panel="metrics">GPU 指标</button>
+        <button class="panel-switch" data-panel="inspection">巡检</button>
+        <div class="mt-4 mb-2 text-xs text-slate-500 uppercase tracking-widest pl-1">InfiniBand</div>
+        <button class="panel-switch" data-panel="ib-cards">IB 网卡</button>
+        <button class="panel-switch" data-panel="ib-test">IB 测试</button>
+      </nav>
+    </aside>
+
+    <main class="p-4 md:p-8">
+      <section id="panel-import" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">导入主机列表</h2>
+        <p class="text-slate-400 mb-4">支持拖拽上传 Excel 文件，快速加载远程 GPU 主机凭证。</p>
+
+        <div class="flex flex-wrap gap-2 mb-5">
+          <span class="field-tag">host_ip *</span>
+          <span class="field-tag">username *</span>
+          <span class="field-tag">password *</span>
+          <span class="field-tag">ssh_port</span>
+          <span class="field-tag">remark</span>
+        </div>
+
+        <div id="upload-dropzone" class="upload-zone rounded-2xl p-8 text-center mb-4">
+          <div class="mx-auto w-16 h-16 rounded-full bg-cyan-500/10 border border-cyan-400/30 flex items-center justify-center mb-3">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="text-cyan-300" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 16.25"/>
+              <path d="m8 16 4-4 4 4"/>
+              <path d="M12 12v9"/>
+            </svg>
+          </div>
+          <p class="font-semibold text-slate-100">拖拽 Excel 文件到此处</p>
+          <p class="text-sm text-slate-400 mt-1">或点击下方按钮选择文件（.xlsx / .xls）</p>
+          <input type="file" id="excel-file" class="hidden" accept=".xlsx,.xls">
+          <button type="button" id="btn-pick-file" class="mt-4 px-4 py-2 rounded-lg bg-slate-800 border border-slate-600 text-slate-200 hover:border-cyan-400">选择文件</button>
+          <p id="selected-file-name" class="text-xs text-slate-400 mt-3">尚未选择文件</p>
+        </div>
+
+        <button type="button" id="btn-import" class="glow-btn px-6 py-2.5 rounded-xl font-semibold">导入主机</button>
+        <div id="import-result" class="mt-4"></div>
+      </section>
+
+      <section id="panel-hosts" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">主机列表</h2>
+        <p class="text-slate-400 mb-5">点击一台主机后，后续查询和巡检都将自动作用于该主机。</p>
+        <div id="host-list-wrap"></div>
+      </section>
+
+      <section id="panel-numa" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">NUMA 拓扑</h2>
+        <div id="numa-hint" class="hint-text mb-4"></div>
+        <div id="numa-content"></div>
+      </section>
+
+      <section id="panel-versions" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">版本信息</h2>
+        <div id="versions-hint" class="hint-text mb-4"></div>
+        <div id="versions-content"></div>
+      </section>
+
+      <section id="panel-metrics" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">GPU 指标</h2>
+        <div id="metrics-hint" class="hint-text mb-4"></div>
+        <div class="dashboard-grid mb-5" id="metrics-dashboard-placeholder"></div>
+        <div id="metrics-content"></div>
+      </section>
+
+      <section id="panel-inspection" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">GPU 巡检</h2>
+        <div id="inspection-hint" class="hint-text mb-4"></div>
+        <button type="button" id="btn-run-inspection" class="glow-btn px-6 py-2.5 rounded-xl font-semibold">执行巡检</button>
+        <div id="inspection-content" class="mt-5"></div>
+      </section>
+
+      <!-- IB Cards Panel -->
+      <section id="panel-ib-cards" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">IB 网卡</h2>
+        <div id="ib-cards-hint" class="hint-text mb-4"></div>
+        <div id="ib-cards-content"></div>
+      </section>
+
+      <!-- IB Test Panel -->
+      <section id="panel-ib-test" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">IB 测试</h2>
+
+        <!-- Single-pair test -->
+        <div class="mb-8">
+          <h3 class="text-lg font-bold mb-3">单对测试</h3>
+          <div class="grid md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">Server 主机</label>
+              <select id="ib-server-select" class="ib-select w-full"></select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">Client 主机</label>
+              <select id="ib-client-select" class="ib-select w-full"></select>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-4 items-center mb-4">
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">测试类型</label>
+              <select id="ib-test-type" class="ib-select">
+                <option value="bandwidth">带宽 (ib_write_bw)</option>
+                <option value="latency">延迟 (ib_write_lat)</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
+              <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" id="ib-bidirectional" class="accent-cyan-400">
+                <span>双向测试</span>
+              </label>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
+              <button type="button" id="btn-ib-single-test" class="glow-btn px-5 py-2 rounded-xl font-semibold">执行测试</button>
+            </div>
+          </div>
+          <div id="ib-single-result"></div>
+        </div>
+
+        <!-- Batch test -->
+        <div class="mb-8">
+          <h3 class="text-lg font-bold mb-3">批量测试</h3>
+          <p class="text-slate-400 text-sm mb-4">使用全部已导入主机自动配对（Dual 模式），并行执行 IB 测试。</p>
+          <div class="flex flex-wrap gap-4 items-center mb-4">
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">测试类型</label>
+              <select id="ib-batch-type" class="ib-select">
+                <option value="bandwidth">带宽 (ib_write_bw)</option>
+                <option value="latency">延迟 (ib_write_lat)</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
+              <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" id="ib-batch-bidir" class="accent-cyan-400">
+                <span>双向测试</span>
+              </label>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
+              <button type="button" id="btn-ib-batch-test" class="glow-btn px-5 py-2 rounded-xl font-semibold">批量测试</button>
+            </div>
+          </div>
+          <div id="ib-batch-status"></div>
+          <div id="ib-batch-result"></div>
+        </div>
+
+        <!-- Historical results -->
+        <div>
+          <h3 class="text-lg font-bold mb-3">历史测试记录</h3>
+          <div id="ib-history-list"></div>
+          <div id="ib-history-detail" class="mt-4"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

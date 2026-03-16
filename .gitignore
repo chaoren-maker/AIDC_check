@@ -1,0 +1,16 @@
+# 虚拟环境，不提交到仓库
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# 本地/环境
+.env
+*.local
