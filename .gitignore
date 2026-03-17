@@ -18,5 +18,6 @@ build/
 # SSH 密钥（安全敏感，不提交）
 ssh_keys/
 
-# IB 测试结果
+# 测试结果日志（本地生成，不提交）
 ib_test_results/
+dcgmi_results/

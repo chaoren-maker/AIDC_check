@@ -33,14 +33,22 @@
   function showPanel(panelId) {
     document.querySelectorAll('.panel').forEach((p) => p.classList.remove('visible'));
     document.querySelectorAll('.panel-switch').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('.panel-switch-sub').forEach((b) => b.classList.remove('active'));
 
     const panel = document.getElementById(`panel-${panelId}`);
     if (panel) {
       panel.classList.add('visible');
     }
-    const navBtn = document.querySelector(`.panel-switch[data-panel="${panelId}"]`);
+
+    const navBtn = document.querySelector(`.panel-switch[data-panel="${panelId}"], .panel-switch-sub[data-panel="${panelId}"]`);
     if (navBtn) {
       navBtn.classList.add('active');
+      const group = navBtn.closest('.nav-group-items');
+      if (group && group.classList.contains('collapsed')) {
+        group.classList.remove('collapsed');
+        const toggle = group.previousElementSibling;
+        if (toggle) toggle.classList.add('open');
+      }
     }
 
     if (panelId === 'hosts') refreshHostList();
@@ -48,6 +56,7 @@
     if (panelId === 'numa' && selectedHostId !== null) loadNuma();
     if (panelId === 'versions' && selectedHostId !== null) loadVersions();
     if (panelId === 'metrics' && selectedHostId !== null) loadMetrics();
+    if (panelId === 'dcgmi') loadDcgmiHistory();
     if (panelId === 'ib-topo') loadIbTopo();
     if (panelId === 'ib-cards' && selectedHostId !== null) loadIbCards();
     if (panelId === 'ib-test') { populateIbHostSelects(); loadIbHistory(); }
@@ -56,6 +65,23 @@
   document.querySelectorAll('.panel-switch[data-panel]').forEach((btn) => {
     btn.addEventListener('click', () => {
       showPanel(btn.getAttribute('data-panel'));
+    });
+  });
+
+  document.querySelectorAll('.panel-switch-sub[data-panel]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      showPanel(btn.getAttribute('data-panel'));
+    });
+  });
+
+  document.querySelectorAll('.nav-group-toggle[data-group]').forEach((toggle) => {
+    toggle.addEventListener('click', () => {
+      const groupId = toggle.getAttribute('data-group');
+      const items = document.getElementById(groupId);
+      if (!items) return;
+      const isCollapsed = items.classList.contains('collapsed');
+      items.classList.toggle('collapsed', !isCollapsed);
+      toggle.classList.toggle('open', isCollapsed);
     });
   });
 
@@ -420,8 +446,9 @@
 
   function runInspection() {
     const content = document.getElementById('inspection-content');
-    if (!content || !setHint('inspection-hint')) {
-      if (content) content.innerHTML = '';
+    if (!content) return;
+    if (selectedHostId === null) {
+      showFeedback(content, '请先在「设备列表」中选择一台主机', 'error');
       return;
     }
 
@@ -462,13 +489,44 @@
     els.fileName.textContent = selectedFile ? selectedFile.name : '尚未选择文件';
   }
 
+  function doImportFile(file) {
+    if (!file) return;
+    showFeedback(els.importResult, '正在导入…', 'info');
+    const fd = new FormData();
+    fd.append('file', file);
+
+    fetch('/api/hosts/import', { method: 'POST', body: fd })
+      .then((resp) => {
+        if (!resp.ok) {
+          return resp
+            .json()
+            .then((payload) => Promise.reject(new Error(payload.detail || resp.statusText)));
+        }
+        return resp.json();
+      })
+      .then((data) => {
+        showFeedback(els.importResult, data.message || '导入成功', 'success');
+        setSelectedFile(null);
+        els.fileInput.value = '';
+        refreshHostList();
+        showPanel('hosts');
+      })
+      .catch((err) => {
+        showFeedback(els.importResult, err.message, 'error');
+      });
+  }
+
   function setupUploadDnD() {
     const pickBtn = document.getElementById('btn-pick-file');
-    const importBtn = document.getElementById('btn-import');
 
     pickBtn.addEventListener('click', () => els.fileInput.click());
+
     els.fileInput.addEventListener('change', () => {
-      setSelectedFile(els.fileInput.files && els.fileInput.files[0]);
+      const file = els.fileInput.files && els.fileInput.files[0];
+      if (file) {
+        setSelectedFile(file);
+        doImportFile(file);
+      }
     });
 
     ['dragenter', 'dragover'].forEach((eventName) => {
@@ -492,36 +550,7 @@
       if (!files || !files[0]) return;
       els.fileInput.files = files;
       setSelectedFile(files[0]);
-    });
-
-    importBtn.addEventListener('click', () => {
-      const file = selectedFile || (els.fileInput.files && els.fileInput.files[0]);
-      if (!file) {
-        showFeedback(els.importResult, '请先选择 Excel 文件', 'error');
-        return;
-      }
-      const fd = new FormData();
-      fd.append('file', file);
-
-      fetch('/api/hosts/import', { method: 'POST', body: fd })
-        .then((resp) => {
-          if (!resp.ok) {
-            return resp
-              .json()
-              .then((payload) => Promise.reject(new Error(payload.detail || resp.statusText)));
-          }
-          return resp.json();
-        })
-        .then((data) => {
-          showFeedback(els.importResult, data.message || '导入成功', 'success');
-          setSelectedFile(null);
-          els.fileInput.value = '';
-          refreshHostList();
-          showPanel('hosts');
-        })
-        .catch((err) => {
-          showFeedback(els.importResult, err.message, 'error');
-        });
+      doImportFile(files[0]);
     });
   }
 
@@ -1193,6 +1222,255 @@
         <div class="anomaly-type">${escapeHtml(a.type)}</div>
       </div>
     </li>`;
+  }
+
+  // =========================================================================
+  // DCGMI Diagnostics
+  // =========================================================================
+
+  const _dcgmiTroubleshootSrc = {
+    'denylist':                  { causes: 'GPU 被列入驱动黑名单，可能是已知故障卡', fix: '检查 dmesg 日志；确认 GPU 型号是否在驱动支持列表中；尝试更新驱动' },
+    'nvml library':              { causes: 'NVML 共享库加载失败', fix: '确认 libnvidia-ml.so 存在；检查 LD_LIBRARY_PATH 和 ldconfig' },
+    'cuda main library':         { causes: 'CUDA 运行时库加载失败', fix: '确认 libcuda.so 存在；运行 ldconfig；检查驱动与 CUDA 版本兼容性' },
+    'cuda runtime library':      { causes: 'CUDA Runtime 与驱动版本不匹配', fix: '运行 nvidia-smi 和 nvcc --version 对比版本；必要时重装匹配版本' },
+    'permissions and os blocks': { causes: '/dev/nvidia* 设备文件权限不足或 cgroups 限制', fix: '检查 ls -la /dev/nvidia*；确认用户在 video 组中；检查容器 cgroup 配置' },
+    'persistence mode':          { causes: 'GPU 未开启持久模式，驱动可能在空闲时卸载', fix: '执行 nvidia-smi -pm 1 开启持久模式（需 root）' },
+    'environment variables':     { causes: '环境变量冲突（如 CUDA_VISIBLE_DEVICES 设置异常）', fix: '检查 env | grep -i cuda 和 env | grep -i nvidia；清除异常变量后重试' },
+    'page retirement/row remap': { causes: 'GPU 存在过多页退休(page retirement)或行重映射', fix: '运行 nvidia-smi -q -d PAGE_RETIREMENT 查看；若 pending 数过多需更换 GPU' },
+    'graphics processes':        { causes: '有图形进程占用 GPU 导致诊断无法独占', fix: '运行 nvidia-smi 查看占用进程；停止相关进程后重试（或使用 systemctl isolate multi-user.target）' },
+    'inforom':                   { causes: 'GPU InfoROM 数据校验失败（固件区域损坏）', fix: '运行 nvidia-smi -q -d INFOROM 检查版本和校验状态；联系 NVIDIA 获取固件更新' },
+    'software':                  { causes: 'CUDA 驱动/Runtime 不匹配、GPU 被进程占用、Persistence Mode 未开启', fix: '运行 nvidia-smi 检查驱动版本；确认无进程占用 GPU；执行 nvidia-smi -pm 1' },
+    'pcie':                      { causes: 'PCIe 链路降速或训练失败（带宽/宽度低于预期）', fix: '运行 nvidia-smi -q -d PERFORMANCE 检查 PCIe Gen/Width；检查物理插槽和线缆' },
+    'gpu memory':                { causes: '显存硬件故障或 ECC 不可纠正错误过多', fix: '运行 nvidia-smi -q -d ECC 检查错误计数；若 Uncorrectable 持续增长需更换 GPU' },
+    'pulse test':                { causes: 'GPU 计算单元短时压力测试未通过', fix: '检查 GPU 温度和供电是否正常；重跑确认是否偶发；持续失败需 RMA' },
+    'targeted stress':           { causes: 'GPU 定向压力测试失败（计算/显存/PCIe）', fix: '查看详细日志确定是计算、显存还是 PCIe 子项失败；检查散热和供电' },
+    'targeted power':            { causes: 'GPU 功耗异常（超限或不足）', fix: '运行 nvidia-smi -q -d POWER 检查功耗限制；确认 PSU 供电充足和 PCIe 辅助供电线缆' },
+    'memory bandwidth':          { causes: '显存带宽低于预期阈值', fix: '检查 ECC 模式是否开启（会降低约 6% 带宽）；排除散热降频因素' },
+    'memtest':                   { causes: '显存硬件测试发现坏位', fix: '多次重跑确认；若持续报错需 RMA 更换 GPU' },
+    'diagnostic':                { causes: '综合诊断异常', fix: '查看原始日志中的具体错误描述；运行 dcgmi diag -r 2 -v 获取详细信息' },
+  };
+
+  function _dcgmiLookup(name) {
+    if (!name) return null;
+    return _dcgmiTroubleshootSrc[name.toLowerCase().trim()] || null;
+  }
+
+  function dcgmiResultBadge(result, testName) {
+    const info = (result === 'Fail' || result === 'Warn') ? _dcgmiLookup(testName) : null;
+    const tooltip = info ? ` title="常见原因：${escapeHtml(info.causes)}"` : '';
+    if (result === 'Pass') return '<span class="badge-pass">Pass</span>';
+    if (result === 'Fail') return `<span class="badge-fail"${tooltip}>Fail</span>`;
+    if (result === 'Warn') return `<span class="badge-agent"${tooltip}>Warn</span>`;
+    if (result === 'Skip') return '<span class="badge-key">Skip</span>';
+    return `<span class="badge-pass">${escapeHtml(result)}</span>`;
+  }
+
+  function dcgmiOverallBadge(overall) {
+    if (overall === 'Pass') return '<span class="badge-pass" style="font-size:14px;padding:4px 16px">PASS</span>';
+    if (overall === 'Fail') return '<span class="badge-fail" style="font-size:14px;padding:4px 16px">FAIL</span>';
+    if (overall === 'Warn') return '<span class="badge-agent" style="font-size:14px;padding:4px 16px">WARN</span>';
+    return `<span class="badge-pass" style="font-size:14px;padding:4px 16px">${escapeHtml(overall || '-')}</span>`;
+  }
+
+  function renderDcgmiSingleResult(data) {
+    if (!data || !data.categories || data.categories.length === 0) {
+      if (data && data.error) return `<div class="feedback error">${escapeHtml(data.error)}</div>`;
+      return '<p class="text-slate-400">无诊断输出（dcgmi 可能未安装或未返回结果）。</p>';
+    }
+
+    let html = '<div class="topo-summary-grid mb-4">';
+    html += renderTopoStat(data.pass_count || 0, '通过', '#4ade80');
+    html += renderTopoStat(data.fail_count || 0, '失败', '#f87171');
+    html += renderTopoStat(data.warn_count || 0, '警告', '#fbbf24');
+    html += `<div class="topo-stat"><div class="val">${dcgmiOverallBadge(data.overall)}</div><div class="lbl">总体结果</div></div>`;
+    html += '</div>';
+
+    html += `<p class="text-sm text-slate-400 mb-3">主机: ${escapeHtml(data.hostname || data.host_ip || '')} | Level ${data.level || '-'}</p>`;
+
+    for (const cat of data.categories) {
+      html += `<div class="topo-section-title">${escapeHtml(cat.name)}</div>`;
+      const th = ['测试项', '结果'].map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+      const body = cat.tests.map((t) => {
+        const isFail = t.result === 'Fail';
+        const isWarn = t.result === 'Warn';
+        const bgStyle = isFail ? ' style="background:rgba(127,29,29,0.15)"' : '';
+        const info = (isFail || isWarn) ? _dcgmiLookup(t.name) : null;
+        const detailPart = t.detail ? `<span class="text-xs text-slate-400 ml-2">(${escapeHtml(t.detail)})</span>` : '';
+        let extraHtml = '';
+        if (info) {
+          extraHtml += `<div class="dcgmi-cause-tip">常见原因：${escapeHtml(info.causes)}</div>`;
+          extraHtml += `<div class="dcgmi-fix-tip">${isFail ? '排查建议' : '建议关注'}：${escapeHtml(info.fix)}</div>`;
+        }
+        return `<tr${bgStyle}><td class="mono">${escapeHtml(t.name)}${detailPart}${extraHtml}</td><td>${dcgmiResultBadge(t.result, t.name)}</td></tr>`;
+      }).join('');
+      html += `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
+    }
+
+    if (data.task_id) {
+      html += `<div class="mt-3"><button class="dl-btn" onclick="window.open('/api/dcgmi/results/${escapeHtml(data.task_id)}/log','_blank')">下载原始日志</button></div>`;
+    }
+
+    return html;
+  }
+
+  function renderDcgmiBatchSummary(summary) {
+    if (!summary) return '<p class="text-slate-400">无汇总数据</p>';
+
+    const results = summary.results || [];
+    const totalHosts = results.length;
+    const passHosts = results.filter((r) => r.overall === 'Pass').length;
+    const failHosts = results.filter((r) => r.overall === 'Fail' || r.overall === 'Error').length;
+    const warnHosts = results.filter((r) => r.overall === 'Warn').length;
+
+    let html = '<div class="topo-summary-grid mb-4">';
+    html += renderTopoStat(totalHosts, '总设备数', '#e2e8f0');
+    html += renderTopoStat(passHosts, '通过', '#4ade80');
+    html += renderTopoStat(failHosts, '失败', '#f87171');
+    html += renderTopoStat(warnHosts, '警告', '#fbbf24');
+    html += '</div>';
+
+    if (results.length > 0) {
+      const th = ['主机', 'IP', 'Level', '通过', '失败', '警告', '结果']
+        .map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+      const body = results.map((r) => {
+        const bgStyle = (r.overall === 'Fail' || r.overall === 'Error')
+          ? ' style="background:rgba(127,29,29,0.1)"' : '';
+        return `<tr${bgStyle}>
+          <td class="mono">${escapeHtml(r.hostname || '-')}</td>
+          <td class="mono">${escapeHtml(r.host_ip || '-')}</td>
+          <td class="mono">${r.level || '-'}</td>
+          <td class="mono">${r.pass_count || 0}</td>
+          <td class="mono">${r.fail_count || 0}</td>
+          <td class="mono">${r.warn_count || 0}</td>
+          <td>${r.error ? '<span class="badge-fail">Error</span>' : dcgmiOverallBadge(r.overall)}</td>
+        </tr>`;
+      }).join('');
+      html += `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
+    }
+
+    if (summary.task_id) {
+      html += `<div class="mt-3"><button class="dl-btn" onclick="window.open('/api/dcgmi/results/${escapeHtml(summary.task_id)}/log','_blank')">下载完整日志</button></div>`;
+    }
+
+    return html;
+  }
+
+  // Single-host DCGMI
+  document.getElementById('btn-dcgmi-single').addEventListener('click', () => {
+    const hintEl = document.getElementById('dcgmi-single-hint');
+    const statusEl = document.getElementById('dcgmi-single-status');
+    const resultEl = document.getElementById('dcgmi-single-result');
+    const level = Number(document.getElementById('dcgmi-single-level').value);
+
+    if (selectedHostId === null) {
+      showFeedback(statusEl, '请先在「设备列表」中选择一台 GPU 主机', 'error');
+      return;
+    }
+
+    statusEl.innerHTML = `<div class="ib-running"><div class="spinner"></div>正在对主机 ${escapeHtml(selectedHostLabel)} 执行 DCGMI Level ${level} 诊断...</div>`;
+    resultEl.innerHTML = '';
+
+    apiPost('/api/dcgmi/diag', { host_id: selectedHostId, level })
+      .then((data) => {
+        statusEl.innerHTML = '<div class="feedback success">单机诊断完成</div>';
+        resultEl.innerHTML = renderDcgmiSingleResult(data);
+        loadDcgmiHistory();
+      })
+      .catch((err) => {
+        statusEl.innerHTML = '';
+        showFeedback(resultEl, err.message, 'error');
+      });
+  });
+
+  // Batch DCGMI
+  document.getElementById('btn-dcgmi-batch').addEventListener('click', () => {
+    const level = Number(document.getElementById('dcgmi-batch-level').value);
+    const statusEl = document.getElementById('dcgmi-batch-status');
+    const resultEl = document.getElementById('dcgmi-batch-result');
+
+    statusEl.innerHTML = '<div class="ib-running"><div class="spinner"></div>正在启动批量 DCGMI 诊断...</div>';
+    resultEl.innerHTML = '';
+
+    apiPost('/api/dcgmi/batch', { level })
+      .then((data) => {
+        const taskId = data.task_id;
+        statusEl.innerHTML = `<div class="ib-running"><div class="spinner"></div>批量诊断进行中 (ID: ${escapeHtml(taskId)})...</div>`;
+        pollDcgmiBatchStatus(taskId, statusEl, resultEl);
+      })
+      .catch((err) => showFeedback(statusEl, err.message, 'error'));
+  });
+
+  function pollDcgmiBatchStatus(taskId, statusEl, resultEl) {
+    const poll = () => {
+      apiGet(`/api/dcgmi/batch/${taskId}/status`)
+        .then((s) => {
+          if (s.status === 'running') {
+            statusEl.innerHTML = `<div class="ib-running"><div class="spinner"></div>批量诊断进行中 (${s.completed_hosts}/${s.total_hosts} 台完成)...</div>`;
+            setTimeout(poll, 3000);
+          } else if (s.status === 'completed') {
+            statusEl.innerHTML = '<div class="feedback success">批量诊断完成</div>';
+            apiGet(`/api/dcgmi/results/${taskId}/summary`)
+              .then((summary) => {
+                resultEl.innerHTML = renderDcgmiBatchSummary(summary);
+                loadDcgmiHistory();
+              })
+              .catch((err) => showFeedback(resultEl, err.message, 'error'));
+          } else {
+            statusEl.innerHTML = `<div class="feedback error">批量诊断失败: ${escapeHtml(s.error || 'unknown')}</div>`;
+          }
+        })
+        .catch((err) => {
+          statusEl.innerHTML = `<div class="feedback error">查询状态失败: ${escapeHtml(err.message)}</div>`;
+        });
+    };
+    setTimeout(poll, 3000);
+  }
+
+  // DCGMI History
+  function loadDcgmiHistory() {
+    const listEl = document.getElementById('dcgmi-history-list');
+    if (!listEl) return;
+    apiGet('/api/dcgmi/results')
+      .then((items) => {
+        if (!items || items.length === 0) {
+          listEl.innerHTML = '<p class="text-slate-400">暂无历史诊断记录。</p>';
+          return;
+        }
+        const th = ['任务ID', 'Level', '时间', '状态', '设备数', '通过', '失败', '操作']
+          .map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+        const body = items.map((item) => {
+          return `<tr class="history-row" data-dcgmi-task-id="${escapeHtml(item.task_id || '')}">
+            <td class="mono">${escapeHtml(item.task_id || '-')}</td>
+            <td class="mono">${item.level || '-'}</td>
+            <td class="mono">${item.started_at ? item.started_at.replace('T', ' ').substring(0, 19) : '-'}</td>
+            <td class="mono">${escapeHtml(item.status || '-')}</td>
+            <td class="mono">${item.total_hosts || 0}</td>
+            <td class="mono">${item.pass_count || 0}</td>
+            <td class="mono">${item.fail_count || 0}</td>
+            <td><button class="dl-btn" onclick="event.stopPropagation();window.open('/api/dcgmi/results/${escapeHtml(item.task_id || '')}/log','_blank')">日志</button></td>
+          </tr>`;
+        }).join('');
+        listEl.innerHTML = `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
+
+        listEl.querySelectorAll('.history-row[data-dcgmi-task-id]').forEach((tr) => {
+          tr.addEventListener('click', () => {
+            const taskId = tr.getAttribute('data-dcgmi-task-id');
+            if (taskId) loadDcgmiHistoryDetail(taskId);
+          });
+        });
+      })
+      .catch(() => { listEl.innerHTML = ''; });
+  }
+
+  function loadDcgmiHistoryDetail(taskId) {
+    const detailEl = document.getElementById('dcgmi-history-detail');
+    if (!detailEl) return;
+    detailEl.innerHTML = '<p class="text-slate-400">加载中...</p>';
+    apiGet(`/api/dcgmi/results/${taskId}/summary`)
+      .then((summary) => {
+        detailEl.innerHTML = `<h4 class="text-md font-bold mb-2">诊断详情: ${escapeHtml(taskId)}</h4>` + renderDcgmiBatchSummary(summary);
+      })
+      .catch((err) => showFeedback(detailEl, err.message, 'error'));
   }
 
   // =========================================================================

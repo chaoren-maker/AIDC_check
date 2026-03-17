@@ -11,9 +11,9 @@
   <div class="grid-bg fixed inset-0 pointer-events-none"></div>
   <div class="relative z-10 min-h-screen lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
     <aside class="glass-card border-r border-cyan-400/20 p-5 lg:p-6">
-      <div class="mb-6">
-        <h1 class="text-2xl font-black tracking-wide">AIDC 巡检控制台</h1>
-        <p class="text-xs text-slate-400 mt-1">AI Data Center Inspection • Dark Ops</p>
+      <div class="mb-6 sidebar-brand">
+        <h1 class="brand-title">AIDC <span class="brand-accent">巡检控制台</span></h1>
+        <p class="brand-sub">AI Data Center Inspection</p>
       </div>
 
       <div class="mb-4 p-3 rounded-xl border border-cyan-400/20 bg-slate-900/50">
@@ -21,18 +21,33 @@
         <div id="selected-host-badge" class="mt-1 font-mono text-cyan-300 text-xs leading-tight break-all">未选择</div>
       </div>
 
-      <nav class="space-y-2" id="side-nav">
+      <nav class="space-y-1.5" id="side-nav">
         <button class="panel-switch" data-panel="import">导入 Excel</button>
         <button class="panel-switch" data-panel="hosts">设备列表</button>
         <button class="panel-switch" data-panel="connectivity">连通性检查</button>
-        <button class="panel-switch" data-panel="numa">GPU 拓扑</button>
-        <button class="panel-switch" data-panel="versions">版本信息</button>
-        <button class="panel-switch" data-panel="metrics">GPU 指标</button>
-        <button class="panel-switch" data-panel="inspection">巡检</button>
-        <div class="mt-4 mb-2 text-xs text-slate-500 uppercase tracking-widest pl-1">InfiniBand</div>
-        <button class="panel-switch" data-panel="ib-topo">IB 拓扑</button>
-        <button class="panel-switch" data-panel="ib-cards">IB 网卡</button>
-        <button class="panel-switch" data-panel="ib-test">IB 测试</button>
+
+        <div class="nav-group">
+          <button class="nav-group-toggle panel-switch" data-group="gpu-group">
+            <span class="nav-arrow">&#9654;</span> GPU 检查
+          </button>
+          <div class="nav-group-items collapsed" id="gpu-group">
+            <button class="panel-switch-sub" data-panel="numa">GPU 拓扑</button>
+            <button class="panel-switch-sub" data-panel="versions">版本信息</button>
+            <button class="panel-switch-sub" data-panel="metrics">指标 &amp; 巡检</button>
+            <button class="panel-switch-sub" data-panel="dcgmi">DCGMI 诊断</button>
+          </div>
+        </div>
+
+        <div class="nav-group">
+          <button class="nav-group-toggle panel-switch" data-group="ib-group">
+            <span class="nav-arrow">&#9654;</span> InfiniBand
+          </button>
+          <div class="nav-group-items collapsed" id="ib-group">
+            <button class="panel-switch-sub" data-panel="ib-topo">IB 拓扑</button>
+            <button class="panel-switch-sub" data-panel="ib-cards">IB 网卡</button>
+            <button class="panel-switch-sub" data-panel="ib-test">IB 测试</button>
+          </div>
+        </div>
       </nav>
     </aside>
 
@@ -69,7 +84,6 @@
           <p id="selected-file-name" class="text-xs text-slate-400 mt-3">尚未选择文件</p>
         </div>
 
-        <button type="button" id="btn-import" class="glow-btn px-6 py-2.5 rounded-xl font-semibold">导入主机</button>
         <div id="import-result" class="mt-4"></div>
       </section>
 
@@ -103,17 +117,71 @@
       </section>
 
       <section id="panel-metrics" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
-        <h2 class="text-2xl font-extrabold mb-2">GPU 指标</h2>
+        <h2 class="text-2xl font-extrabold mb-2">GPU 指标 &amp; 巡检</h2>
         <div id="metrics-hint" class="hint-text mb-4"></div>
         <div class="dashboard-grid mb-5" id="metrics-dashboard-placeholder"></div>
         <div id="metrics-content"></div>
+        <div class="mt-6 pt-6 border-t border-slate-700/50">
+          <h3 class="text-lg font-bold mb-3">阈值巡检</h3>
+          <p class="text-slate-400 text-sm mb-3">基于温度和显存阈值，对每张 GPU 给出 ok / warning / error 状态。</p>
+          <button type="button" id="btn-run-inspection" class="glow-btn px-5 py-2 rounded-xl font-semibold">执行巡检</button>
+          <div id="inspection-content" class="mt-5"></div>
+        </div>
       </section>
 
-      <section id="panel-inspection" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
-        <h2 class="text-2xl font-extrabold mb-2">GPU 巡检</h2>
-        <div id="inspection-hint" class="hint-text mb-4"></div>
-        <button type="button" id="btn-run-inspection" class="glow-btn px-6 py-2.5 rounded-xl font-semibold">执行巡检</button>
-        <div id="inspection-content" class="mt-5"></div>
+      <!-- DCGMI Diagnostics Panel -->
+      <section id="panel-dcgmi" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">DCGMI 诊断</h2>
+        <p class="text-slate-400 mb-4 text-sm">对 GPU 设备执行 <code class="text-cyan-300">dcgmi diag</code> Level 1/2 诊断，用于新机上架验收。仅针对 GPU 类型设备。</p>
+
+        <!-- Single-host test -->
+        <div class="mb-8">
+          <h3 class="text-lg font-bold mb-3">单机诊断</h3>
+          <div id="dcgmi-single-hint" class="hint-text mb-3"></div>
+          <div class="flex flex-wrap gap-4 items-center mb-4">
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">诊断等级</label>
+              <select id="dcgmi-single-level" class="ib-select">
+                <option value="1">Level 1（快速）</option>
+                <option value="2">Level 2（中等）</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
+              <button type="button" id="btn-dcgmi-single" class="glow-btn px-5 py-2 rounded-xl font-semibold">单机诊断</button>
+            </div>
+          </div>
+          <div id="dcgmi-single-status"></div>
+          <div id="dcgmi-single-result"></div>
+        </div>
+
+        <!-- Batch test -->
+        <div class="mb-8">
+          <h3 class="text-lg font-bold mb-3">批量诊断</h3>
+          <p class="text-slate-400 text-sm mb-4">对所有已导入 GPU 设备并行执行 DCGMI 诊断。</p>
+          <div class="flex flex-wrap gap-4 items-center mb-4">
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">诊断等级</label>
+              <select id="dcgmi-batch-level" class="ib-select">
+                <option value="1">Level 1（快速）</option>
+                <option value="2">Level 2（中等）</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
+              <button type="button" id="btn-dcgmi-batch" class="glow-btn px-5 py-2 rounded-xl font-semibold">批量诊断</button>
+            </div>
+          </div>
+          <div id="dcgmi-batch-status"></div>
+          <div id="dcgmi-batch-result"></div>
+        </div>
+
+        <!-- History -->
+        <div>
+          <h3 class="text-lg font-bold mb-3">历史诊断记录</h3>
+          <div id="dcgmi-history-list"></div>
+          <div id="dcgmi-history-detail" class="mt-4"></div>
+        </div>
       </section>
 
       <!-- IB Topology Panel -->
