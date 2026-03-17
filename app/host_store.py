@@ -1,5 +1,5 @@
 """
-In-memory store for loaded GPU host list.
+In-memory store for loaded device/host list.
 List API responses must not include passwords or key paths.
 """
 
@@ -33,6 +33,7 @@ def get_hosts_safe() -> list[dict[str, Any]]:
             "host_ip": h["host_ip"],
             "hostname": h.get("hostname", ""),
             "username": h["username"],
+            "device_type": h.get("device_type", "GPU"),
             "auth_type": h.get("auth_type", "password"),
             "ssh_port": h.get("ssh_port", 22),
             "remark": h.get("remark", ""),

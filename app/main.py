@@ -1,8 +1,8 @@
 """
-FastAPI application entry point.
+FastAPI application entry point for AIDC inspection tool.
 
-Runs locally and connects to remote GPU hosts via SSH.
-No script is deployed on GPU servers.
+Runs locally and connects to remote devices (GPU/CPU/Switch/Security) via SSH.
+No script is deployed on remote devices.
 """
 
 from pathlib import Path
@@ -14,11 +14,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app.routers import hosts as hosts_router
 from app.routers import ib as ib_router
+from app.routers import ib_topo as ib_topo_router
 from app.routers import remote as remote_router
 
 app = FastAPI(
-    title="GPU Server Inspection",
-    description="Local tool to query remote GPU hosts (NUMA, versions, metrics, inspection) via SSH.",
+    title="AIDC Inspection",
+    description="Local tool to inspect remote AIDC devices (GPU, CPU, switch, security) via SSH.",
 )
 
 app.add_middleware(
@@ -38,7 +39,7 @@ async def serve_index():
     """根路径返回 Web UI 页面。"""
     index = STATIC_DIR / "index.html"
     if not index.exists():
-        return {"service": "gpu-server-inspection", "ui": "static files not found"}
+        return {"service": "aidc-inspection", "ui": "static files not found"}
     return FileResponse(index)
 
 
@@ -51,6 +52,7 @@ async def health() -> dict:
 app.include_router(hosts_router.router)
 app.include_router(remote_router.router)
 app.include_router(ib_router.router)
+app.include_router(ib_topo_router.router)
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

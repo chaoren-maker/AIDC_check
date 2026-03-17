@@ -44,9 +44,11 @@
     }
 
     if (panelId === 'hosts') refreshHostList();
+    if (panelId === 'connectivity') { /* manual trigger via button */ }
     if (panelId === 'numa' && selectedHostId !== null) loadNuma();
     if (panelId === 'versions' && selectedHostId !== null) loadVersions();
     if (panelId === 'metrics' && selectedHostId !== null) loadMetrics();
+    if (panelId === 'ib-topo') loadIbTopo();
     if (panelId === 'ib-cards' && selectedHostId !== null) loadIbCards();
     if (panelId === 'ib-test') { populateIbHostSelects(); loadIbHistory(); }
   }
@@ -133,21 +135,30 @@
           return `<span class="${cls}">${escapeHtml(label)}</span>`;
         };
 
+        const dtBadge = (t) => {
+          const m = { GPU: 'badge-pass', CPU: 'badge-key', '交换机': 'badge-agent' };
+          const cls = m[t] || 'badge-pass';
+          return `<span class="${cls}">${escapeHtml(t || 'GPU')}</span>`;
+        };
+
         const rows = hosts.map((host) => [
           host.id,
           `<span class="status-dot" id="dot-${host.id}"></span>`,
           host.hostname || '-',
           host.host_ip || '',
+          dtBadge(host.device_type),
           host.username || '',
           authBadge(host.auth_type),
           host.ssh_port || 22,
           host.remark || '-',
-          `<button class="key-upload-btn" data-host-id="${host.id}" title="上传 SSH 私钥文件">上传密钥</button>` +
+          (host.auth_type !== 'password'
+            ? `<button class="key-upload-btn" data-host-id="${host.id}" title="上传 SSH 私钥文件">上传密钥</button>`
+            : '') +
           `<button class="del-host-btn" data-host-id="${host.id}" title="移除此主机">删除</button>`,
         ]);
 
         const html = buildTable(
-          ['ID', '状态', '主机名', 'IP', '用户名', '认证', '端口', '备注', '操作'],
+          ['ID', '状态', '主机名', 'IP', '类型', '用户名', '认证', '端口', '备注', '操作'],
           rows,
           (row) => (Number(row[0]) === selectedHostId ? 'selected host-row' : 'host-row'),
           true
@@ -908,6 +919,280 @@
         detailEl.innerHTML = `<h4 class="text-md font-bold mb-2">测试详情: ${escapeHtml(taskId)}</h4>` + renderBatchSummary(summary);
       })
       .catch((err) => showFeedback(detailEl, err.message, 'error'));
+  }
+
+  // =========================================================================
+  // Connectivity Check
+  // =========================================================================
+
+  document.getElementById('btn-connectivity-check').addEventListener('click', async () => {
+    const resultEl = document.getElementById('connectivity-result');
+    resultEl.innerHTML = '<div class="ib-running"><div class="spinner"></div><span>正在批量 PING 探测所有设备连通性...</span></div>';
+
+    try {
+      const hostData = await apiGet('/api/hosts');
+      const hosts = hostData.hosts || [];
+      if (hosts.length === 0) {
+        showFeedback(resultEl, '暂无设备，请先导入 Excel', 'error');
+        return;
+      }
+
+      const results = [];
+      const promises = hosts.map((host) =>
+        fetch(`/api/hosts/${host.id}/ping`)
+          .then((r) => r.json())
+          .then((d) => results.push({ ...host, online: d.online }))
+          .catch(() => results.push({ ...host, online: false }))
+      );
+      await Promise.all(promises);
+
+      results.sort((a, b) => a.id - b.id);
+      const offline = results.filter((r) => !r.online);
+      const online = results.filter((r) => r.online);
+
+      let html = '<div class="topo-summary-grid mb-4">';
+      html += renderTopoStat(results.length, '总设备数', '#e2e8f0');
+      html += renderTopoStat(online.length, '在线', '#4ade80');
+      html += renderTopoStat(offline.length, '不可达', '#f87171');
+      html += '</div>';
+
+      if (offline.length > 0) {
+        html += '<div class="topo-section-title" style="color:#f87171">不可达设备</div>';
+        const offRows = offline.map((h) => [
+          h.id,
+          h.hostname || '-',
+          h.host_ip,
+          h.device_type || 'GPU',
+          h.remark || '-',
+        ]);
+        html += buildTable(['ID', '主机名', 'IP', '类型', '备注'], offRows);
+      }
+
+      if (online.length > 0) {
+        html += '<div class="topo-section-title" style="color:#4ade80">在线设备</div>';
+        const onRows = online.map((h) => [
+          h.id,
+          h.hostname || '-',
+          h.host_ip,
+          h.device_type || 'GPU',
+          h.remark || '-',
+        ]);
+        html += buildTable(['ID', '主机名', 'IP', '类型', '备注'], onRows);
+      }
+
+      resultEl.innerHTML = html;
+    } catch (err) {
+      showFeedback(resultEl, err.message, 'error');
+    }
+  });
+
+  // =========================================================================
+  // IB Topology
+  // =========================================================================
+
+  function loadIbTopo() {
+    const hintEl = document.getElementById('ib-topo-hint');
+    if (selectedHostId === null) { setHint('ib-topo-hint'); return; }
+    if (hintEl) hintEl.textContent = '';
+  }
+
+  document.getElementById('btn-ib-topo-query').addEventListener('click', async () => {
+    const resultEl = document.getElementById('ib-topo-result');
+    const btn = document.getElementById('btn-ib-topo-query');
+    if (selectedHostId === null) {
+      showFeedback(resultEl, '请先在主机列表中选择一台主机', 'error');
+      return;
+    }
+
+    const totalSec = 150;
+    let remaining = totalSec;
+    const countdownEl = 'ib-topo-countdown';
+    resultEl.innerHTML = `<div class="ib-running"><div class="spinner"></div><span>正在远程执行 iblinkinfo ... <span id="${countdownEl}" class="text-cyan-300 font-mono">${remaining}s</span></span></div>`;
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+
+    const timer = setInterval(() => {
+      remaining--;
+      const cdEl = document.getElementById(countdownEl);
+      if (cdEl) cdEl.textContent = `${remaining}s`;
+      if (remaining <= 0) {
+        clearInterval(timer);
+        showFeedback(resultEl, '连接超时，请确认主机网络可达或换一台主机重试', 'error');
+        btn.disabled = false;
+        btn.style.opacity = '';
+      }
+    }, 1000);
+
+    try {
+      const data = await apiGet(`/api/ib-topo/${selectedHostId}`);
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.style.opacity = '';
+      renderIbTopology(data);
+    } catch (err) {
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.style.opacity = '';
+      showFeedback(resultEl, err.message, 'error');
+    }
+  });
+
+  function renderIbTopology(data) {
+    const el = document.getElementById('ib-topo-result');
+    const s = data.summary || {};
+    const anomalies = data.anomalies || [];
+    const leafs = data.leafs || [];
+    const spines = data.spines || [];
+    const servers = data.servers || [];
+    const leafServerMap = data.leaf_server_map || {};
+    const spineLeafMatrix = data.spine_leaf_matrix || {};
+    const leafSpineMap = data.leaf_spine_map || {};
+
+    let html = '';
+
+    // Summary cards
+    html += '<div class="topo-summary-grid">';
+    html += renderTopoStat(s.spine_count, 'Spine 交换机', '#c4b5fd');
+    html += renderTopoStat(s.leaf_count, 'Leaf 交换机', '#a5f3fc');
+    html += renderTopoStat(s.server_count, 'GPU 服务器', '#e2e8f0');
+    html += renderTopoStat(s.total_active_links, '活跃链路', '#4ade80');
+    html += renderTopoStat(s.total_down_links, '断开端口', '#fbbf24');
+    html += renderTopoStat(s.error_count, '错误', '#f87171');
+    html += renderTopoStat(s.warning_count, '告警', '#fbbf24');
+    html += '</div>';
+
+    // Health badge
+    const hCls = s.health === 'healthy' ? 'healthy' : 'unhealthy';
+    const hLabel = s.health === 'healthy' ? '线序正常' : '发现异常';
+    html += `<div class="mb-6"><span class="topo-health ${hCls}">${hLabel}</span></div>`;
+
+    // Topology diagram
+    html += '<div class="topo-section-title">拓扑总览</div>';
+    html += '<div class="topo-diagram">';
+    html += '<div class="topo-tier-label">SPINE 层</div>';
+    html += '<div class="topo-tier">';
+    spines.forEach((name) => {
+      html += `<div class="topo-node spine">${escapeHtml(name)}</div>`;
+    });
+    html += '</div>';
+
+    html += '<div class="text-center text-slate-500 text-xs my-2">│ 每 Leaf 双上行 × 16 Spine │</div>';
+
+    html += '<div class="topo-tier-label">LEAF 层</div>';
+    html += '<div class="topo-tier">';
+    leafs.forEach((name) => {
+      html += `<div class="topo-node leaf">${escapeHtml(name)}</div>`;
+    });
+    html += '</div>';
+
+    html += '<div class="text-center text-slate-500 text-xs my-2">│ 下行接入 GPU 服务器 │</div>';
+
+    html += '<div class="topo-tier-label">SERVER 层</div>';
+    html += '<div class="topo-tier">';
+    servers.forEach((name) => {
+      const short = name.replace(/^bj09-gpu-200b-/, '');
+      html += `<div class="topo-node server" title="${escapeHtml(name)}">${escapeHtml(short)}</div>`;
+    });
+    html += '</div>';
+    html += '</div>';
+
+    // Leaf → Server detail
+    html += '<div class="topo-section-title">Leaf 接入详情</div>';
+    const activeLeafs = leafs.filter((l) => (leafServerMap[l] || []).length > 0);
+    const errorPorts = new Set();
+    anomalies.filter((a) => a.type === 'server_port_mismatch').forEach((a) => {
+      errorPorts.add(`${a.leaf}:${a.actual_port}`);
+    });
+
+    activeLeafs.forEach((leafName) => {
+      const entries = leafServerMap[leafName] || [];
+      html += '<div class="topo-leaf-group">';
+      html += `<div class="leaf-title">
+        <div class="topo-node leaf" style="min-width:auto;padding:3px 8px;font-size:11px">${escapeHtml(leafName)}</div>
+        <span class="text-xs text-slate-400">${entries.length} 台服务器接入</span>
+      </div>`;
+      html += '<div class="server-chips">';
+      entries.forEach((e) => {
+        const short = (e.server || '').replace(/^bj09-gpu-200b-/, '');
+        const isErr = errorPorts.has(`${leafName}:${e.leaf_port}`);
+        const cls = isErr ? 'server-chip error' : 'server-chip';
+        const tip = `${e.server} [${e.hca}] → port ${e.leaf_port}`;
+        html += `<div class="${cls}" title="${escapeHtml(tip)}">P${e.leaf_port}: ${escapeHtml(short)} (${escapeHtml(e.hca)})</div>`;
+      });
+      html += '</div></div>';
+    });
+
+    // Spine-Leaf full-mesh matrix
+    html += '<div class="topo-section-title">Spine ↔ Leaf 互联矩阵</div>';
+    html += '<div class="topo-matrix"><table><thead><tr><th>Leaf \\ Spine</th>';
+    spines.forEach((sp) => {
+      html += `<th>${escapeHtml(sp.replace('ibspine', 'S'))}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    leafs.forEach((leaf) => {
+      html += `<tr><td style="text-align:left;font-weight:600;color:#a5f3fc">${escapeHtml(leaf)}</td>`;
+      spines.forEach((spine) => {
+        const pairs = (leafSpineMap[leaf] || {})[spine] || [];
+        if (pairs.length > 0) {
+          const ports = pairs.map((p) => p.leaf_port).sort((a, b) => a - b).join(',');
+          html += `<td class="connected" title="Leaf ports: ${ports}">✓ ${pairs.length}</td>`;
+        } else {
+          html += '<td class="missing" title="缺少连接">✗</td>';
+        }
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+
+    // Anomalies
+    if (anomalies.length > 0) {
+      const errors = anomalies.filter((a) => a.level === 'error');
+      const warnings = anomalies.filter((a) => a.level === 'warning');
+
+      html += '<div class="topo-section-title">异常检测结果</div>';
+
+      if (errors.length > 0) {
+        html += `<p class="text-sm text-rose-300 mb-2 font-semibold">错误 (${errors.length})</p>`;
+        html += '<ul class="anomaly-list">';
+        errors.forEach((a) => {
+          html += renderAnomalyItem(a);
+        });
+        html += '</ul>';
+      }
+
+      if (warnings.length > 0) {
+        html += `<p class="text-sm text-yellow-300 mb-2 mt-4 font-semibold">告警 (${warnings.length})</p>`;
+        html += '<ul class="anomaly-list">';
+        warnings.forEach((a) => {
+          html += renderAnomalyItem(a);
+        });
+        html += '</ul>';
+      }
+    } else {
+      html += '<div class="topo-section-title">异常检测结果</div>';
+      html += '<p class="text-sm text-emerald-300">未发现异常，所有线序和互联关系正确。</p>';
+    }
+
+    el.innerHTML = html;
+  }
+
+  function renderTopoStat(val, label, color) {
+    return `<div class="topo-stat">
+      <div class="val" style="color:${color}">${val ?? '-'}</div>
+      <div class="lbl">${label}</div>
+    </div>`;
+  }
+
+  function renderAnomalyItem(a) {
+    const icon = a.level === 'error' ? '!' : '?';
+    return `<li class="anomaly-item">
+      <div class="anomaly-icon ${a.level}">${icon}</div>
+      <div>
+        <div class="anomaly-msg">${escapeHtml(a.message)}</div>
+        <div class="anomaly-type">${escapeHtml(a.type)}</div>
+      </div>
+    </li>`;
   }
 
   // =========================================================================

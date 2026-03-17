@@ -12,6 +12,7 @@ from openpyxl.workbook import Workbook
 
 from app.excel_format import (
     COLUMN_ALIASES,
+    DEFAULT_DEVICE_TYPE,
     DEFAULT_SSH_PORT,
     REQUIRED_COLUMNS,
     VALID_AUTH_TYPES,
@@ -137,6 +138,11 @@ def parse_hosts_excel(workbook: Workbook) -> list[dict[str, Any]]:
             if "hostname" in col_indexes
             else ""
         )
+        device_type = (
+            _get_cell(row_list, col_indexes["device_type"])
+            if "device_type" in col_indexes
+            else ""
+        ) or DEFAULT_DEVICE_TYPE
         remark = (
             _get_cell(row_list, col_indexes["remark"])
             if "remark" in col_indexes
@@ -152,6 +158,7 @@ def parse_hosts_excel(workbook: Workbook) -> list[dict[str, Any]]:
                 "hostname": hostname,
                 "username": username,
                 "password": password if auth_type == "password" else "",
+                "device_type": device_type,
                 "auth_type": auth_type,
                 "key_path": key_path,
                 "ssh_port": ssh_port,

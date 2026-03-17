@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GPU 服务器巡检</title>
+  <title>AIDC 巡检控制台</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -12,23 +12,25 @@
   <div class="relative z-10 min-h-screen lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
     <aside class="glass-card border-r border-cyan-400/20 p-5 lg:p-6">
       <div class="mb-6">
-        <h1 class="text-2xl font-black tracking-wide">GPU 巡检控制台</h1>
-        <p class="text-xs text-slate-400 mt-1">Remote Host Inspection • Dark Ops Theme</p>
+        <h1 class="text-2xl font-black tracking-wide">AIDC 巡检控制台</h1>
+        <p class="text-xs text-slate-400 mt-1">AI Data Center Inspection • Dark Ops</p>
       </div>
 
       <div class="mb-4 p-3 rounded-xl border border-cyan-400/20 bg-slate-900/50">
         <div class="text-xs text-slate-400">当前选择主机</div>
-        <div id="selected-host-badge" class="mt-1 font-mono text-cyan-300">未选择</div>
+        <div id="selected-host-badge" class="mt-1 font-mono text-cyan-300 text-xs leading-tight break-all">未选择</div>
       </div>
 
       <nav class="space-y-2" id="side-nav">
         <button class="panel-switch" data-panel="import">导入 Excel</button>
-        <button class="panel-switch" data-panel="hosts">主机列表</button>
+        <button class="panel-switch" data-panel="hosts">设备列表</button>
+        <button class="panel-switch" data-panel="connectivity">连通性检查</button>
         <button class="panel-switch" data-panel="numa">GPU 拓扑</button>
         <button class="panel-switch" data-panel="versions">版本信息</button>
         <button class="panel-switch" data-panel="metrics">GPU 指标</button>
         <button class="panel-switch" data-panel="inspection">巡检</button>
         <div class="mt-4 mb-2 text-xs text-slate-500 uppercase tracking-widest pl-1">InfiniBand</div>
+        <button class="panel-switch" data-panel="ib-topo">IB 拓扑</button>
         <button class="panel-switch" data-panel="ib-cards">IB 网卡</button>
         <button class="panel-switch" data-panel="ib-test">IB 测试</button>
       </nav>
@@ -37,13 +39,14 @@
     <main class="p-4 md:p-8">
       <section id="panel-import" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
         <h2 class="text-2xl font-extrabold mb-2">导入主机列表</h2>
-        <p class="text-slate-400 mb-4">支持拖拽上传 Excel 文件，快速加载远程 GPU 主机凭证。</p>
+        <p class="text-slate-400 mb-4">支持拖拽上传 Excel 文件，快速加载远程设备（GPU / CPU / 交换机 / 安全设备等）。</p>
 
         <div class="flex flex-wrap gap-2 mb-5">
           <span class="field-tag">host_ip *</span>
           <span class="field-tag">hostname</span>
           <span class="field-tag">username *</span>
           <span class="field-tag">password</span>
+          <span class="field-tag">device_type</span>
           <span class="field-tag">auth_type</span>
           <span class="field-tag">key_path</span>
           <span class="field-tag">ssh_port</span>
@@ -71,12 +74,19 @@
       </section>
 
       <section id="panel-hosts" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
-        <h2 class="text-2xl font-extrabold mb-2">主机列表</h2>
+        <h2 class="text-2xl font-extrabold mb-2">设备列表</h2>
         <div class="flex items-center justify-between mb-5">
-          <p class="text-slate-400">点击一台主机后，后续查询和巡检都将自动作用于该主机。</p>
+          <p class="text-slate-400">点击一台设备后，后续查询和巡检都将自动作用于该设备。</p>
           <button type="button" id="btn-clear-hosts" class="text-xs px-3 py-1.5 rounded-lg border border-rose-400/40 text-rose-300 hover:bg-rose-500/15 transition-colors">清空全部</button>
         </div>
         <div id="host-list-wrap"></div>
+      </section>
+
+      <section id="panel-connectivity" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">连通性检查</h2>
+        <p class="text-slate-400 mb-4 text-sm">对所有已导入设备进行 PING 连通性批量检测，列出不可达设备。</p>
+        <button type="button" id="btn-connectivity-check" class="glow-btn px-6 py-2.5 rounded-xl font-semibold mb-4">开始检测</button>
+        <div id="connectivity-result"></div>
       </section>
 
       <section id="panel-numa" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
@@ -104,6 +114,15 @@
         <div id="inspection-hint" class="hint-text mb-4"></div>
         <button type="button" id="btn-run-inspection" class="glow-btn px-6 py-2.5 rounded-xl font-semibold">执行巡检</button>
         <div id="inspection-content" class="mt-5"></div>
+      </section>
+
+      <!-- IB Topology Panel -->
+      <section id="panel-ib-topo" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">IB 拓扑检查</h2>
+        <p class="text-slate-400 mb-4 text-sm">在当前选中主机上执行 <code class="text-cyan-300">iblinkinfo</code>，自动解析 Leaf-Spine 拓扑、识别线序错误和端口接线异常。</p>
+        <div id="ib-topo-hint" class="hint-text mb-4"></div>
+        <button type="button" id="btn-ib-topo-query" class="glow-btn px-6 py-2.5 rounded-xl font-semibold mb-4">查询 IB 拓扑</button>
+        <div id="ib-topo-result"></div>
       </section>
 
       <!-- IB Cards Panel -->

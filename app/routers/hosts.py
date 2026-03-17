@@ -74,17 +74,14 @@ async def delete_all_hosts():
 
 @router.get("/{host_id}/ping")
 async def ping_host(host_id: int):
-    """Quick SSH connectivity check (5s timeout). Returns online status."""
+    """Quick ICMP ping reachability check. Returns online status."""
     host = resolve_host(host_id)
     if not host:
         raise HTTPException(status_code=404, detail=f"Host not found: {host_id}")
-    try:
-        from app.ssh_runner import create_ssh_client
-        client = create_ssh_client(host, timeout=5)
-        client.close()
-        return {"host_id": host_id, "online": True}
-    except Exception:
-        return {"host_id": host_id, "online": False}
+    from app.net_ping import ping_host as ping_once
+
+    online = await ping_once(host["host_ip"], timeout_s=1.5, count=1)
+    return {"host_id": host_id, "online": online}
 
 
 @router.post("/{host_id}/upload-key")

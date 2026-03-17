@@ -429,3 +429,258 @@ body {
 .history-row:hover {
   background: rgba(34, 211, 238, 0.08) !important;
 }
+
+/* ── IB Topology styles ── */
+.topo-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.topo-stat {
+  background: rgba(2, 6, 23, 0.5);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  border-radius: 12px;
+  padding: 12px;
+  text-align: center;
+}
+
+.topo-stat .val {
+  font-size: 24px;
+  font-weight: 800;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.topo-stat .lbl {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.topo-health {
+  display: inline-block;
+  padding: 3px 14px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.topo-health.healthy {
+  color: #bbf7d0;
+  border: 1px solid rgba(74, 222, 128, 0.5);
+  background: rgba(20, 83, 45, 0.4);
+}
+
+.topo-health.unhealthy {
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  background: rgba(127, 29, 29, 0.4);
+}
+
+/* Spine-Leaf visual diagram */
+.topo-diagram {
+  position: relative;
+  margin: 24px 0;
+  overflow-x: auto;
+}
+
+.topo-tier {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.topo-node {
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  min-width: 70px;
+  transition: all 0.15s ease;
+  cursor: default;
+}
+
+.topo-node.spine {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.25), rgba(139, 92, 246, 0.1));
+  border: 1px solid rgba(139, 92, 246, 0.5);
+  color: #c4b5fd;
+}
+
+.topo-node.leaf {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.2), rgba(34, 211, 238, 0.08));
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  color: #a5f3fc;
+}
+
+.topo-node.server {
+  background: rgba(2, 6, 23, 0.5);
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  color: #e2e8f0;
+  font-size: 10px;
+  min-width: 50px;
+}
+
+.topo-node:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.2);
+}
+
+.topo-tier-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.topo-leaf-group {
+  background: rgba(2, 6, 23, 0.35);
+  border: 1px solid rgba(100, 116, 139, 0.18);
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.topo-leaf-group .leaf-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #a5f3fc;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.topo-leaf-group .server-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.server-chip {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  color: #cbd5e1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.server-chip.error {
+  border-color: rgba(248, 113, 113, 0.6);
+  color: #fca5a5;
+  background: rgba(127, 29, 29, 0.3);
+}
+
+/* Anomaly list */
+.anomaly-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.anomaly-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.15);
+  font-size: 13px;
+  transition: background 0.15s ease;
+}
+
+.anomaly-item:hover {
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.anomaly-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  margin-top: 1px;
+}
+
+.anomaly-icon.error {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+}
+
+.anomaly-icon.warning {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+.anomaly-msg {
+  color: #e2e8f0;
+  line-height: 1.5;
+}
+
+.anomaly-type {
+  font-size: 11px;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Spine-Leaf matrix compact table */
+.topo-matrix {
+  overflow-x: auto;
+  border: 1px solid rgba(100, 116, 139, 0.28);
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.5);
+}
+
+.topo-matrix table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.topo-matrix th,
+.topo-matrix td {
+  border-bottom: 1px solid rgba(100, 116, 139, 0.15);
+  border-right: 1px solid rgba(100, 116, 139, 0.1);
+  padding: 5px 6px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.topo-matrix th {
+  background: rgba(15, 23, 42, 0.6);
+  color: #a5f3fc;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+
+.topo-matrix td.connected {
+  color: #4ade80;
+}
+
+.topo-matrix td.missing {
+  color: #f87171;
+  font-weight: 700;
+}
+
+.topo-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin: 24px 0 10px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.2);
+}
