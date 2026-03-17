@@ -14,3 +14,9 @@ build/
 # 本地/环境
 .env
 *.local
+
+# SSH 密钥（安全敏感，不提交）
+ssh_keys/
+
+# IB 测试结果
+ib_test_results/

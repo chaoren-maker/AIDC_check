@@ -1,20 +1,20 @@
 """
-Parse Excel file into list of host entries (id, host_ip, username, password, ssh_port, remark).
+Parse Excel file into list of host entries.
 Validates required columns and skips invalid rows with clear errors.
+Supports password, key, and agent authentication (auto-inferred).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import openpyxl
 from openpyxl.workbook import Workbook
 
 from app.excel_format import (
     COLUMN_ALIASES,
     DEFAULT_SSH_PORT,
-    OPTIONAL_COLUMNS,
     REQUIRED_COLUMNS,
+    VALID_AUTH_TYPES,
 )
 
 
@@ -27,8 +27,7 @@ class ExcelParseError(Exception):
 def _normalize_header(cell_value: Any) -> str:
     if cell_value is None:
         return ""
-    s = str(cell_value).strip().lower()
-    return s
+    return str(cell_value).strip().lower()
 
 
 def _find_column_indexes(header_row: list[Any]) -> dict[str, int]:
@@ -71,11 +70,30 @@ def _parse_port(value: str) -> int:
     return DEFAULT_SSH_PORT
 
 
+def _infer_auth_type(password: str, key_path: str, explicit_auth_type: str) -> str:
+    """Determine auth_type from available fields.
+
+    Priority:
+      1. Explicit auth_type column value (if valid)
+      2. password has value and is not "no" → "password"
+      3. key_path has value → "key"
+      4. fallback → "agent"
+    """
+    if explicit_auth_type and explicit_auth_type in VALID_AUTH_TYPES:
+        return explicit_auth_type
+
+    if password and password.lower() != "no":
+        return "password"
+    if key_path:
+        return "key"
+    return "agent"
+
+
 def parse_hosts_excel(workbook: Workbook) -> list[dict[str, Any]]:
     """
     Read first sheet; row 1 = header, row 2+ = data.
-    Returns list of host entries, each: id (int, 0-based), host_ip, username, password, ssh_port, remark.
-    Skips rows where host_ip or username is empty; raises ExcelParseError if required columns missing.
+    Returns list of host entries with auth_type auto-inferred.
+    Skips rows where host_ip or username is empty.
     """
     sheet = workbook.active
     if sheet is None:
@@ -86,29 +104,56 @@ def parse_hosts_excel(workbook: Workbook) -> list[dict[str, Any]]:
     header_row = list(rows[0])
     col_indexes = _find_column_indexes(header_row)
     hosts: list[dict[str, Any]] = []
+
     for row_idx, row in enumerate(rows[1:], start=2):
         row_list = list(row) if row else []
         host_ip = _get_cell(row_list, col_indexes["host_ip"])
         username = _get_cell(row_list, col_indexes["username"])
-        password = _get_cell(row_list, col_indexes["password"])
         if not host_ip or not username:
             continue
+
+        password = (
+            _get_cell(row_list, col_indexes["password"])
+            if "password" in col_indexes
+            else ""
+        )
+        explicit_auth = (
+            _get_cell(row_list, col_indexes["auth_type"]).lower()
+            if "auth_type" in col_indexes
+            else ""
+        )
+        key_path = (
+            _get_cell(row_list, col_indexes["key_path"])
+            if "key_path" in col_indexes
+            else ""
+        )
         ssh_port = (
             _parse_port(_get_cell(row_list, col_indexes["ssh_port"]))
             if "ssh_port" in col_indexes
             else DEFAULT_SSH_PORT
+        )
+        hostname = (
+            _get_cell(row_list, col_indexes["hostname"])
+            if "hostname" in col_indexes
+            else ""
         )
         remark = (
             _get_cell(row_list, col_indexes["remark"])
             if "remark" in col_indexes
             else ""
         )
+
+        auth_type = _infer_auth_type(password, key_path, explicit_auth)
+
         hosts.append(
             {
                 "id": len(hosts),
                 "host_ip": host_ip,
+                "hostname": hostname,
                 "username": username,
-                "password": password,
+                "password": password if auth_type == "password" else "",
+                "auth_type": auth_type,
+                "key_path": key_path,
                 "ssh_port": ssh_port,
                 "remark": remark,
             }

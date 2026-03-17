@@ -5,7 +5,7 @@ results queries and log downloads.
 
 from __future__ import annotations
 
-from typing import Union
+from typing import Optional, Union
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -60,13 +60,19 @@ class BandwidthTestRequest(BaseModel):
     server_id: Union[int, str]
     client_id: Union[int, str]
     bidirectional: bool = False
+    server_dev: Optional[str] = None
+    client_dev: Optional[str] = None
 
 
 @router.post("/test/bandwidth")
 async def post_bandwidth_test(req: BandwidthTestRequest):
     """Run ib_write_bw between two hosts."""
     try:
-        result = run_bandwidth_test(req.server_id, req.client_id, bidirectional=req.bidirectional)
+        result = run_bandwidth_test(
+            req.server_id, req.client_id,
+            bidirectional=req.bidirectional,
+            server_dev=req.server_dev, client_dev=req.client_dev,
+        )
         # Also persist single-pair results
         from datetime import datetime
         import uuid as _uuid
@@ -98,13 +104,18 @@ async def post_bandwidth_test(req: BandwidthTestRequest):
 class LatencyTestRequest(BaseModel):
     server_id: Union[int, str]
     client_id: Union[int, str]
+    server_dev: Optional[str] = None
+    client_dev: Optional[str] = None
 
 
 @router.post("/test/latency")
 async def post_latency_test(req: LatencyTestRequest):
     """Run ib_write_lat between two hosts."""
     try:
-        result = run_latency_test(req.server_id, req.client_id)
+        result = run_latency_test(
+            req.server_id, req.client_id,
+            server_dev=req.server_dev, client_dev=req.client_dev,
+        )
         from datetime import datetime
         import uuid as _uuid
         from app.ib_results_store import save_result

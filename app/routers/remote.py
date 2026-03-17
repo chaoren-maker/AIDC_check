@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.remote.gpu_metrics import fetch_gpu_metrics, run_inspection
 from app.remote.numa import fetch_numa_topology
-from app.remote.versions import fetch_gpu_versions, fetch_nic_firmware, fetch_server_os_version
+from app.remote.versions import fetch_all_versions, fetch_gpu_versions, fetch_nic_firmware, fetch_server_os_version
 from app.ssh_runner import SSHRunnerError
 
 router = APIRouter(prefix="/api/hosts", tags=["remote"])
@@ -26,6 +26,18 @@ async def get_numa_topology(host_id: str):
     hid = _host_id_from_path(host_id)
     try:
         return fetch_numa_topology(hid)
+    except SSHRunnerError as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/{host_id}/versions")
+async def get_all_versions(host_id: str):
+    """Get GPU + NIC + server versions in one SSH session."""
+    hid = _host_id_from_path(host_id)
+    try:
+        return fetch_all_versions(hid)
     except SSHRunnerError as e:
         if "not found" in str(e).lower():
             raise HTTPException(status_code=404, detail=str(e))

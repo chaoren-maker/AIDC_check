@@ -1,6 +1,8 @@
 # GPU Server Inspection & IB Bench Web Tool
 
-本地运行的 Web 小工具：通过浏览器导入 Excel 加载远程 GPU 主机列表（IP + 账号密码），选择主机后查询 NUMA 拓扑、固件/版本、GPU 指标，并支持一键巡检。同时集成了 InfiniBand 网络性能测试（IB 网卡发现、带宽/延迟测试、批量测试与结果下载）。
+本地运行的 Web 小工具：通过浏览器导入 Excel 加载远程 GPU 主机列表，选择主机后查询 NUMA 拓扑、固件/版本、GPU 指标，并支持一键巡检。同时集成了 InfiniBand 网络性能测试（IB 网卡发现、带宽/延迟测试、批量测试与结果下载）。
+
+支持三种 SSH 认证方式：**密码认证**、**密钥认证**、**Agent 认证**。
 
 **重要**：本工具**仅在本机**安装与运行，通过 SSH 连接远程 GPU 服务器执行命令获取信息；**不会**在任意 GPU 服务器上安装或部署任何脚本或常驻进程。
 
@@ -39,15 +41,27 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Excel 主机表格式（导入用）
 
-| 列名        | 必填 | 说明 |
-|-------------|------|------|
-| `host_ip`   | 是   | 远程 GPU 服务器 IP 或主机名 |
-| `username`  | 是   | SSH 登录用户名 |
-| `password`  | 是   | SSH 登录密码 |
-| `ssh_port`  | 否   | SSH 端口，默认 22 |
-| `remark`    | 否   | 备注 |
+| 列名         | 必填 | 说明 |
+|-------------- |------|------|
+| `host_ip`    | 是   | 远程 GPU 服务器 IP 或主机名 |
+| `username`   | 是   | SSH 登录用户名 |
+| `password`   | 否   | SSH 登录密码（密码认证时需要） |
+| `auth_type`  | 否   | 认证方式：`password` / `key` / `agent`（留空自动推断） |
+| `key_path`   | 否   | SSH 私钥文件路径（密钥认证时需要） |
+| `ssh_port`   | 否   | SSH 端口，默认 22 |
+| `remark`     | 否   | 备注 |
 
 首行为表头，从第二行起每行一台主机。支持 `.xlsx`。
+
+### 认证方式说明
+
+| 方式 | 使用场景 | 说明 |
+|------|---------|------|
+| **password** | 有密码的服务器 | Excel 中填写 `password` 列即可，`auth_type` 自动推断 |
+| **key** | 密钥登录的服务器 | Excel 中填写 `key_path`，或在 Web 页面主机列表点击🔑按钮上传密钥 |
+| **agent** | 已配置 SSH Agent 的服务器 | `password` 和 `key_path` 都不填，自动使用本机 SSH Agent |
+
+上传的密钥文件保存在项目目录 `ssh_keys/`（已加入 `.gitignore`，不会被提交），权限设置为 `0600`。
 
 ## InfiniBand 测试功能
 

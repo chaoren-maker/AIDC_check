@@ -1,5 +1,6 @@
 (function () {
   let selectedHostId = null;
+  let selectedHostLabel = '';
   let selectedFile = null;
 
   const els = {
@@ -13,7 +14,7 @@
   };
 
   function escapeHtml(text) {
-    return String(text || '')
+    return String(text ?? '')
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;')
@@ -26,7 +27,7 @@
       els.selectedHostBadge.textContent = '未选择';
       return;
     }
-    els.selectedHostBadge.textContent = `Host ID: ${selectedHostId}`;
+    els.selectedHostBadge.textContent = selectedHostLabel || `Host ID: ${selectedHostId}`;
   }
 
   function showPanel(panelId) {
@@ -86,12 +87,13 @@
     el.innerHTML = `<div class="feedback ${type}">${escapeHtml(message || '')}</div>`;
   }
 
-  function buildTable(headers, rows, rowClassResolver) {
+  function buildTable(headers, rows, rowClassResolver, rawHtml) {
     const th = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('');
     const body = rows
       .map((row, idx) => {
         const cls = rowClassResolver ? rowClassResolver(row, idx) : '';
-        return `<tr class="${cls}">${row.map((c) => `<td class="mono">${escapeHtml(c)}</td>`).join('')}</tr>`;
+        const cells = row.map((c) => rawHtml ? `<td class="mono">${c}</td>` : `<td class="mono">${escapeHtml(c)}</td>`).join('');
+        return `<tr class="${cls}">${cells}</tr>`;
       })
       .join('');
     return `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
@@ -123,34 +125,104 @@
           return;
         }
 
+        const authBadge = (t) => {
+          const map = { password: '密码', key: '密钥', agent: 'Agent' };
+          const colors = { password: 'badge-pass', key: 'badge-key', agent: 'badge-agent' };
+          const label = map[t] || t || '密码';
+          const cls = colors[t] || 'badge-pass';
+          return `<span class="${cls}">${escapeHtml(label)}</span>`;
+        };
+
         const rows = hosts.map((host) => [
           host.id,
+          `<span class="status-dot" id="dot-${host.id}"></span>`,
+          host.hostname || '-',
           host.host_ip || '',
           host.username || '',
+          authBadge(host.auth_type),
           host.ssh_port || 22,
           host.remark || '-',
+          `<button class="key-upload-btn" data-host-id="${host.id}" title="上传 SSH 私钥文件">上传密钥</button>` +
+          `<button class="del-host-btn" data-host-id="${host.id}" title="移除此主机">删除</button>`,
         ]);
 
         const html = buildTable(
-          ['ID', 'IP / 主机', '用户名', '端口', '备注'],
+          ['ID', '状态', '主机名', 'IP', '用户名', '认证', '端口', '备注', '操作'],
           rows,
-          (row) => (Number(row[0]) === selectedHostId ? 'selected host-row' : 'host-row')
+          (row) => (Number(row[0]) === selectedHostId ? 'selected host-row' : 'host-row'),
+          true
         );
 
         els.hostListWrap.innerHTML = html;
-        els.hostListWrap.querySelectorAll('tbody tr').forEach((tr) => {
+
+        els.hostListWrap.querySelectorAll('.key-upload-btn').forEach((btn) => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            triggerKeyUpload(Number(btn.getAttribute('data-host-id')));
+          });
+        });
+
+        els.hostListWrap.querySelectorAll('.del-host-btn').forEach((btn) => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const hid = Number(btn.getAttribute('data-host-id'));
+            if (!confirm(`确认删除主机 ID ${hid}？`)) return;
+            fetch(`/api/hosts/${hid}`, { method: 'DELETE' })
+              .then((r) => r.json())
+              .then(() => { if (selectedHostId === hid) { selectedHostId = null; selectedHostLabel = ''; setSelectedHostBadge(); } refreshHostList(); })
+              .catch((err) => alert('删除失败: ' + err.message));
+          });
+        });
+
+        els.hostListWrap.querySelectorAll('tbody tr').forEach((tr, idx) => {
           tr.style.cursor = 'pointer';
           tr.addEventListener('click', () => {
-            const idText = tr.querySelector('td') ? tr.querySelector('td').textContent : '';
-            selectedHostId = Number(idText);
+            const host = hosts[idx];
+            if (!host) return;
+            selectedHostId = host.id;
+            selectedHostLabel = host.hostname
+              ? `${host.hostname} (${host.host_ip})`
+              : host.host_ip;
             setSelectedHostBadge();
             refreshHostList();
           });
+        });
+
+        hosts.forEach((host) => {
+          const dot = document.getElementById(`dot-${host.id}`);
+          if (dot) dot.className = 'status-dot checking';
+          fetch(`/api/hosts/${host.id}/ping`)
+            .then((r) => r.json())
+            .then((d) => {
+              if (dot) dot.className = d.online ? 'status-dot online' : 'status-dot offline';
+            })
+            .catch(() => { if (dot) dot.className = 'status-dot offline'; });
         });
       })
       .catch((err) => {
         showFeedback(els.hostListWrap, err.message, 'error');
       });
+  }
+
+  function triggerKeyUpload(hostId) {
+    const keyInput = document.getElementById('key-file-input');
+    keyInput.onchange = async () => {
+      const file = keyInput.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const resp = await fetch(`/api/hosts/${hostId}/upload-key`, { method: 'POST', body: fd });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'Upload failed');
+        refreshHostList();
+      } catch (e) {
+        alert('密钥上传失败: ' + e.message);
+      } finally {
+        keyInput.value = '';
+      }
+    };
+    keyInput.click();
   }
 
   function setHint(hintId) {
@@ -174,24 +246,81 @@
     content.innerHTML = '<p class="text-slate-400">加载中...</p>';
     apiGet(`/api/hosts/${selectedHostId}/numa-topology`)
       .then((data) => {
+        if (data.raw_unavailable) {
+          content.innerHTML = '<p class="text-slate-400">远程主机未安装 nvidia-smi 或执行失败。</p>';
+          return;
+        }
         const sections = [];
 
-        if (Array.isArray(data.nodes) && data.nodes.length > 0) {
-          const rows = data.nodes.map((n) => [
-            n.node_id != null ? n.node_id : '-',
-            Array.isArray(n.cpus) && n.cpus.length ? `${n.cpus.slice(0, 18).join(', ')}${n.cpus.length > 18 ? '...' : ''}` : '-',
-            n.memory_mb != null ? n.memory_mb : '-',
-            Array.isArray(n.gpus) && n.gpus.length ? n.gpus.join(', ') : '-',
-          ]);
-          sections.push(`<h3 class="text-lg font-bold mb-2">NUMA 节点</h3>${buildTable(['NUMA', 'CPU 列表', '内存(MB)', 'GPU 索引'], rows)}`);
-        }
-
+        // GPU / NUMA affinity summary
         if (Array.isArray(data.gpus) && data.gpus.length > 0) {
-          const rows = data.gpus.map((g) => [g.gpu_index != null ? g.gpu_index : '-', g.numa_node != null ? g.numa_node : '-']);
-          sections.push(`<h3 class="text-lg font-bold mt-6 mb-2">GPU / NUMA 绑定</h3>${buildTable(['GPU', 'NUMA 节点'], rows)}`);
+          const rows = data.gpus.map((g) => [
+            g.device || '-',
+            g.numa_node != null ? g.numa_node : 'N/A',
+            g.cpu_affinity || '-',
+          ]);
+          sections.push(`<h3 class="text-lg font-bold mb-2">GPU / NUMA 绑定</h3>${buildTable(['GPU', 'NUMA 节点', 'CPU Affinity'], rows)}`);
         }
 
-        content.innerHTML = sections.join('') || '<p class="text-slate-400">无数据或远程未安装 numactl / nvidia-smi。</p>';
+        // Full topology matrix
+        const headers = data.headers || [];
+        const rows = data.rows || [];
+        if (headers.length > 0 && rows.length > 0) {
+          const connColor = (v) => {
+            if (v === 'X') return 'color:#94a3b8';
+            if (v && v.startsWith('NV')) return 'color:#4ade80;font-weight:700';
+            if (v === 'PIX' || v === 'PXB') return 'color:#67e8f9';
+            if (v === 'NODE') return 'color:#fbbf24';
+            if (v === 'SYS') return 'color:#f87171';
+            return '';
+          };
+
+          let th = '<th></th>' + headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('') +
+                   '<th>CPU Affinity</th><th>NUMA</th>';
+          let body = rows.map((r) => {
+            let cells = `<td class="mono" style="font-weight:700;color:#a5f3fc">${escapeHtml(r.device)}</td>`;
+            headers.forEach((h) => {
+              const v = (r.connections || {})[h] || '-';
+              cells += `<td class="mono" style="${connColor(v)}">${escapeHtml(v)}</td>`;
+            });
+            cells += `<td class="mono">${escapeHtml(r.cpu_affinity || '-')}</td>`;
+            cells += `<td class="mono">${escapeHtml(r.numa_affinity || '-')}</td>`;
+            return `<tr>${cells}</tr>`;
+          }).join('');
+
+          sections.push(
+            `<h3 class="text-lg font-bold mt-6 mb-2">拓扑矩阵 (nvidia-smi topo -m)</h3>` +
+            `<div class="table-wrap"><table style="font-size:12px"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`
+          );
+        }
+
+        // Legend
+        const legend = data.legend || {};
+        const legendKeys = Object.keys(legend);
+        if (legendKeys.length > 0) {
+          let legendHtml = '<div class="mt-4 p-4 rounded-xl border border-slate-700/50 bg-slate-900/40"><h4 class="text-sm font-bold mb-2 text-slate-300">Legend</h4>';
+          legendHtml += '<div class="grid gap-1 text-xs text-slate-400">';
+          legendKeys.forEach((k) => {
+            legendHtml += `<div><span class="mono text-cyan-300 mr-2">${escapeHtml(k)}</span>${escapeHtml(legend[k])}</div>`;
+          });
+          legendHtml += '</div></div>';
+          sections.push(legendHtml);
+        }
+
+        // NIC Legend
+        const nicLegend = data.nic_legend || {};
+        const nicKeys = Object.keys(nicLegend);
+        if (nicKeys.length > 0) {
+          let nicHtml = '<div class="mt-3 p-4 rounded-xl border border-slate-700/50 bg-slate-900/40"><h4 class="text-sm font-bold mb-2 text-slate-300">NIC Legend</h4>';
+          nicHtml += '<div class="grid grid-cols-2 md:grid-cols-4 gap-1 text-xs text-slate-400">';
+          nicKeys.forEach((k) => {
+            nicHtml += `<div><span class="mono text-purple-300">${escapeHtml(k)}</span>: <span class="mono">${escapeHtml(nicLegend[k])}</span></div>`;
+          });
+          nicHtml += '</div></div>';
+          sections.push(nicHtml);
+        }
+
+        content.innerHTML = sections.join('') || '<p class="text-slate-400">无数据。</p>';
       })
       .catch((err) => showFeedback(content, err.message, 'error'));
   }
@@ -204,19 +333,19 @@
     }
 
     content.innerHTML = '<p class="text-slate-400">加载中...</p>';
-    Promise.all([
-      apiGet(`/api/hosts/${selectedHostId}/versions/gpu`),
-      apiGet(`/api/hosts/${selectedHostId}/versions/nic`),
-      apiGet(`/api/hosts/${selectedHostId}/versions/server`),
-    ])
-      .then(([gpu, nic, server]) => {
+    apiGet(`/api/hosts/${selectedHostId}/versions`)
+      .then((data) => {
+        const gpu = data.gpu || {};
+        const nics = data.nics || [];
+        const server = data.server || {};
+
         const gpuRows = (gpu.gpus || []).map((g, idx) => [
           idx,
           g.name || '-',
           g.driver_version || gpu.driver_version || '-',
           g.vbios_version || '-',
         ]);
-        const nicRows = (nic.nics || []).map((n) => [n.device || '-', n.firmware_version || '未知', n.subsystem || '-']);
+        const nicRows = nics.map((n) => [n.device || '-', n.firmware_version || '未知', n.subsystem || '-']);
         const serverRows = [[server.kernel || '-', server.distro || '-', server.version_id || '-']];
 
         const blocks = [
@@ -387,6 +516,14 @@
 
   document.getElementById('btn-run-inspection').addEventListener('click', runInspection);
 
+  document.getElementById('btn-clear-hosts').addEventListener('click', () => {
+    if (!confirm('确认清空全部主机？')) return;
+    fetch('/api/hosts', { method: 'DELETE' })
+      .then((r) => r.json())
+      .then(() => { selectedHostId = null; selectedHostLabel = ''; setSelectedHostBadge(); refreshHostList(); })
+      .catch((err) => alert('清空失败: ' + err.message));
+  });
+
   // =========================================================================
   // IB Cards
   // =========================================================================
@@ -427,14 +564,47 @@
         const hosts = data.hosts || [];
         const serverSel = document.getElementById('ib-server-select');
         const clientSel = document.getElementById('ib-client-select');
-        const optHtml = hosts.map((h) => `<option value="${h.id}">${h.host_ip} (ID:${h.id})</option>`).join('');
+        const optHtml = hosts.map((h) => {
+          const label = h.hostname ? `${h.hostname} (${h.host_ip})` : `${h.host_ip} (ID:${h.id})`;
+          return `<option value="${h.id}">${escapeHtml(label)}</option>`;
+        }).join('');
         serverSel.innerHTML = optHtml || '<option disabled>请先导入主机</option>';
         clientSel.innerHTML = optHtml || '<option disabled>请先导入主机</option>';
         if (hosts.length >= 2) {
           clientSel.selectedIndex = 1;
         }
+        loadIbCardOptions('ib-server-select', 'ib-server-card');
+        loadIbCardOptions('ib-client-select', 'ib-client-card');
       })
       .catch(() => {});
+  }
+
+  function loadIbCardOptions(hostSelectId, cardSelectId) {
+    const hostSel = document.getElementById(hostSelectId);
+    const cardSel = document.getElementById(cardSelectId);
+    if (!hostSel || !cardSel) return;
+
+    const fillCards = () => {
+      const hostId = hostSel.value;
+      cardSel.innerHTML = '<option value="">加载中...</option>';
+      if (!hostId) { cardSel.innerHTML = '<option value="">全部（自动配对）</option>'; return; }
+      apiGet(`/api/ib/${hostId}/cards`)
+        .then((data) => {
+          let opts = '<option value="">全部（自动配对）</option>';
+          for (const speed of ['400G', '200G']) {
+            const cards = data[speed] || [];
+            cards.forEach((c) => {
+              const label = `${c.interface} [${speed}] ${c.state || ''}`;
+              opts += `<option value="${escapeHtml(c.interface)}" data-speed="${speed}">${escapeHtml(label)}</option>`;
+            });
+          }
+          cardSel.innerHTML = opts;
+        })
+        .catch(() => { cardSel.innerHTML = '<option value="">获取失败</option>'; });
+    };
+
+    hostSel.addEventListener('change', fillCards);
+    fillCards();
   }
 
   // =========================================================================
@@ -442,13 +612,17 @@
   // =========================================================================
 
   document.getElementById('btn-ib-single-test').addEventListener('click', () => {
-    const serverId = Number(document.getElementById('ib-server-select').value);
-    const clientId = Number(document.getElementById('ib-client-select').value);
+    const serverVal = document.getElementById('ib-server-select').value;
+    const clientVal = document.getElementById('ib-client-select').value;
+    const serverId = serverVal !== '' ? Number(serverVal) : null;
+    const clientId = clientVal !== '' ? Number(clientVal) : null;
+    const serverDev = document.getElementById('ib-server-card').value || null;
+    const clientDev = document.getElementById('ib-client-card').value || null;
     const testType = document.getElementById('ib-test-type').value;
     const bidirectional = document.getElementById('ib-bidirectional').checked;
     const resultEl = document.getElementById('ib-single-result');
 
-    if (!serverId || !clientId) {
+    if (serverId == null || clientId == null) {
       showFeedback(resultEl, '请选择 Server 和 Client 主机', 'error');
       return;
     }
@@ -457,17 +631,33 @@
       return;
     }
 
-    resultEl.innerHTML = '<div class="ib-running"><div class="spinner"></div>测试执行中，请稍候...</div>';
+    const abortCtrl = new AbortController();
+    resultEl.innerHTML =
+      '<div class="ib-running"><div class="spinner"></div>测试执行中，请稍候...' +
+      '<button class="cancel-btn" id="btn-cancel-single">取消</button></div>';
 
-    const body = testType === 'bandwidth'
-      ? { server_id: serverId, client_id: clientId, bidirectional }
-      : { server_id: serverId, client_id: clientId };
+    document.getElementById('btn-cancel-single').addEventListener('click', () => {
+      abortCtrl.abort();
+      resultEl.innerHTML = '<div class="feedback error">测试已取消</div>';
+    });
 
-    apiPost(`/api/ib/test/${testType}`, body)
-      .then((data) => {
-        resultEl.innerHTML = renderTestResult(data);
-      })
-      .catch((err) => showFeedback(resultEl, err.message, 'error'));
+    const body = { server_id: serverId, client_id: clientId };
+    if (serverDev) body.server_dev = serverDev;
+    if (clientDev) body.client_dev = clientDev;
+    if (testType === 'bandwidth') body.bidirectional = bidirectional;
+
+    fetch(`/api/ib/test/${testType}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: abortCtrl.signal,
+    })
+      .then((r) => { if (!r.ok) return r.json().then((d) => Promise.reject(new Error(d.detail || r.statusText))); return r.json(); })
+      .then((data) => { resultEl.innerHTML = renderTestResult(data); })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        showFeedback(resultEl, err.message, 'error');
+      });
   });
 
   // =========================================================================

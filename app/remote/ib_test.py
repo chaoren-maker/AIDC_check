@@ -6,17 +6,15 @@ Ported from ib-bench main.py — starts server/client via SSH, parses results.
 from __future__ import annotations
 
 import logging
-import re
 import time
 from typing import Any
-
-import paramiko
 
 from app.host_store import resolve_host
 from app.remote.ib_cards import discover_ib_cards
 from app.remote.ib_config import (
     BANDWIDTH_THRESHOLDS,
     BASE_PORT,
+    CMD_TIMEOUT,
     LATENCY_TEST_DURATION,
     LATENCY_TEST_SIZES,
     LATENCY_THRESHOLDS,
@@ -26,28 +24,20 @@ from app.remote.ib_config import (
     TEST_COOLDOWN_TIME,
     TEST_DURATION,
 )
-from app.ssh_runner import SSHRunnerError
+from app.ssh_runner import SSHRunnerError, create_ssh_client
 
 logger = logging.getLogger(__name__)
 
+CHANNEL_READ_TIMEOUT = CMD_TIMEOUT + 10
 
-# ---------------------------------------------------------------------------
-# SSH helper
-# ---------------------------------------------------------------------------
 
-def _ssh_connect(host: dict[str, Any], timeout: int = 45) -> paramiko.SSHClient:
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        hostname=host["host_ip"],
-        port=host.get("ssh_port", 22),
-        username=host["username"],
-        password=host["password"],
-        timeout=timeout,
-        allow_agent=False,
-        look_for_keys=False,
-    )
-    return client
+def _read_with_timeout(channel_file, timeout_sec: int = CHANNEL_READ_TIMEOUT) -> str:
+    """Read SSH channel stdout with a timeout to prevent infinite blocking."""
+    channel_file.channel.settimeout(timeout_sec)
+    try:
+        return channel_file.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return "(read timed out)\n"
 
 
 # ---------------------------------------------------------------------------
@@ -136,10 +126,30 @@ def _pair_cards(
 # Bandwidth test
 # ---------------------------------------------------------------------------
 
+def _filter_pairs(
+    pairs: list[dict[str, Any]],
+    server_dev: str | None,
+    client_dev: str | None,
+) -> list[dict[str, Any]]:
+    """Filter auto-paired cards when user specifies a device."""
+    if not server_dev and not client_dev:
+        return pairs
+    filtered = []
+    for p in pairs:
+        if server_dev and p["server_dev"] != server_dev:
+            continue
+        if client_dev and p["client_dev"] != client_dev:
+            continue
+        filtered.append(p)
+    return filtered
+
+
 def run_bandwidth_test(
     server_id: int | str,
     client_id: int | str,
     bidirectional: bool = False,
+    server_dev: str | None = None,
+    client_dev: str | None = None,
 ) -> dict[str, Any]:
     """Run ib_write_bw between two hosts, return per-card results."""
     server_host = resolve_host(server_id)
@@ -154,7 +164,7 @@ def run_bandwidth_test(
 
     server_cards = discover_ib_cards(server_id)
     client_cards = discover_ib_cards(client_id)
-    pairs = _pair_cards(server_cards, client_cards)
+    pairs = _filter_pairs(_pair_cards(server_cards, client_cards), server_dev, client_dev)
 
     if not pairs:
         return {
@@ -170,12 +180,12 @@ def run_bandwidth_test(
     raw_log_parts: list[str] = []
     results: list[dict[str, Any]] = []
 
-    server_ssh = _ssh_connect(server_host)
+    server_ssh = create_ssh_client(server_host)
     try:
         server_channels: list[dict] = []
         for p in pairs:
             cmd = (
-                f"ib_write_bw {bi_flag}--ib-dev={p['server_dev']} "
+                f"timeout {CMD_TIMEOUT} ib_write_bw {bi_flag}--ib-dev={p['server_dev']} "
                 f"-p {p['port']} -D {SERVER_DURATION} -q 4 --report_gbits -F"
             )
             _, stdout, stderr = server_ssh.exec_command(cmd)
@@ -183,12 +193,12 @@ def run_bandwidth_test(
 
         time.sleep(SERVER_WAIT_TIME)
 
-        client_ssh = _ssh_connect(client_host)
+        client_ssh = create_ssh_client(client_host)
         try:
             client_channels: list[dict] = []
             for p in pairs:
                 cmd = (
-                    f"ib_write_bw {bi_flag}--ib-dev={p['client_dev']} {server_ip} "
+                    f"timeout {CMD_TIMEOUT} ib_write_bw {bi_flag}--ib-dev={p['client_dev']} {server_ip} "
                     f"-p {p['port']} -D {TEST_DURATION} -q 4 --report_gbits -F"
                 )
                 _, stdout, stderr = client_ssh.exec_command(cmd)
@@ -196,8 +206,8 @@ def run_bandwidth_test(
 
             for s_ch, c_ch in zip(server_channels, client_channels):
                 p = s_ch["pair"]
-                server_out = s_ch["stdout"].read().decode("utf-8", errors="ignore")
-                client_out = c_ch["stdout"].read().decode("utf-8", errors="ignore")
+                server_out = _read_with_timeout(s_ch["stdout"])
+                client_out = _read_with_timeout(c_ch["stdout"])
 
                 server_bw = parse_bw_output(server_out)
                 client_bw = parse_bw_output(client_out)
@@ -253,6 +263,8 @@ def run_bandwidth_test(
 def run_latency_test(
     server_id: int | str,
     client_id: int | str,
+    server_dev: str | None = None,
+    client_dev: str | None = None,
 ) -> dict[str, Any]:
     """Run ib_write_lat between two hosts for multiple message sizes."""
     server_host = resolve_host(server_id)
@@ -267,7 +279,7 @@ def run_latency_test(
 
     server_cards = discover_ib_cards(server_id)
     client_cards = discover_ib_cards(client_id)
-    pairs = _pair_cards(server_cards, client_cards)
+    pairs = _filter_pairs(_pair_cards(server_cards, client_cards), server_dev, client_dev)
 
     if not pairs:
         return {
@@ -281,19 +293,22 @@ def run_latency_test(
     raw_log_parts: list[str] = []
     card_results: list[dict[str, Any]] = []
 
-    server_ssh = _ssh_connect(server_host)
-    client_ssh = _ssh_connect(client_host)
+    server_ssh = create_ssh_client(server_host)
+    client_ssh = create_ssh_client(client_host)
     try:
         for p in pairs:
             size_results: list[dict[str, Any]] = []
             all_pass = True
 
             for size in LATENCY_TEST_SIZES:
+                lat_cmd_timeout = LATENCY_TEST_DURATION + 15
                 s_cmd = (
+                    f"timeout {lat_cmd_timeout} "
                     f"ib_write_lat -d {p['server_dev']} -p {p['port']} "
                     f"-m {LATENCY_MTU} -s {size} -F -D {LATENCY_TEST_DURATION} --cpu_util"
                 )
                 c_cmd = (
+                    f"timeout {lat_cmd_timeout} "
                     f"ib_write_lat {server_ip} -d {p['client_dev']} -p {p['port']} "
                     f"-m {LATENCY_MTU} -s {size} -F -D {LATENCY_TEST_DURATION} --cpu_util"
                 )
@@ -302,8 +317,8 @@ def run_latency_test(
                 time.sleep(SERVER_WAIT_TIME)
                 _, c_stdout, _ = client_ssh.exec_command(c_cmd)
 
-                c_out = c_stdout.read().decode("utf-8", errors="ignore")
-                s_out = s_stdout.read().decode("utf-8", errors="ignore")
+                c_out = _read_with_timeout(c_stdout, lat_cmd_timeout + 10)
+                s_out = _read_with_timeout(s_stdout, lat_cmd_timeout + 10)
 
                 t_avg = parse_latency_output(c_out)
                 passed = False

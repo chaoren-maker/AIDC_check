@@ -9,30 +9,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-import paramiko
-
 from app.host_store import resolve_host
-from app.ssh_runner import SSHRunnerError
-
-
-def _connect(host: dict[str, Any], timeout: int = 30) -> paramiko.SSHClient:
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    try:
-        client.connect(
-            hostname=host["host_ip"],
-            port=host.get("ssh_port", 22),
-            username=host["username"],
-            password=host["password"],
-            timeout=timeout,
-            allow_agent=False,
-            look_for_keys=False,
-        )
-    except paramiko.AuthenticationException as exc:
-        raise SSHRunnerError(f"SSH auth failed for {host['host_ip']}: {exc}") from exc
-    except (paramiko.SSHException, OSError) as exc:
-        raise SSHRunnerError(f"SSH error for {host['host_ip']}: {exc}") from exc
-    return client
+from app.ssh_runner import SSHRunnerError, create_ssh_client
 
 
 def _parse_mst_output(mst_output: str) -> tuple[set[str], set[str], set[str]]:
@@ -145,7 +123,7 @@ def discover_ib_cards(host_id: int | str) -> dict[str, Any]:
     if not host:
         raise SSHRunnerError(f"Host not found: {host_id}")
 
-    ssh = _connect(host)
+    ssh = create_ssh_client(host)
     try:
         _, mst_stdout, _ = ssh.exec_command("mst status -vv 2>/dev/null || true", timeout=30)
         mst_output = mst_stdout.read().decode("utf-8", errors="replace")

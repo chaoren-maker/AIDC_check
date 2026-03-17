@@ -24,7 +24,7 @@
       <nav class="space-y-2" id="side-nav">
         <button class="panel-switch" data-panel="import">导入 Excel</button>
         <button class="panel-switch" data-panel="hosts">主机列表</button>
-        <button class="panel-switch" data-panel="numa">NUMA 拓扑</button>
+        <button class="panel-switch" data-panel="numa">GPU 拓扑</button>
         <button class="panel-switch" data-panel="versions">版本信息</button>
         <button class="panel-switch" data-panel="metrics">GPU 指标</button>
         <button class="panel-switch" data-panel="inspection">巡检</button>
@@ -41,11 +41,15 @@
 
         <div class="flex flex-wrap gap-2 mb-5">
           <span class="field-tag">host_ip *</span>
+          <span class="field-tag">hostname</span>
           <span class="field-tag">username *</span>
-          <span class="field-tag">password *</span>
+          <span class="field-tag">password</span>
+          <span class="field-tag">auth_type</span>
+          <span class="field-tag">key_path</span>
           <span class="field-tag">ssh_port</span>
           <span class="field-tag">remark</span>
         </div>
+        <p class="text-xs text-slate-500 mb-4">认证方式自动推断：有 password → 密码认证；有 key_path → 密钥认证；都为空 → Agent 认证。也可在 auth_type 列显式指定。</p>
 
         <div id="upload-dropzone" class="upload-zone rounded-2xl p-8 text-center mb-4">
           <div class="mx-auto w-16 h-16 rounded-full bg-cyan-500/10 border border-cyan-400/30 flex items-center justify-center mb-3">
@@ -68,12 +72,16 @@
 
       <section id="panel-hosts" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
         <h2 class="text-2xl font-extrabold mb-2">主机列表</h2>
-        <p class="text-slate-400 mb-5">点击一台主机后，后续查询和巡检都将自动作用于该主机。</p>
+        <div class="flex items-center justify-between mb-5">
+          <p class="text-slate-400">点击一台主机后，后续查询和巡检都将自动作用于该主机。</p>
+          <button type="button" id="btn-clear-hosts" class="text-xs px-3 py-1.5 rounded-lg border border-rose-400/40 text-rose-300 hover:bg-rose-500/15 transition-colors">清空全部</button>
+        </div>
         <div id="host-list-wrap"></div>
       </section>
 
       <section id="panel-numa" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
-        <h2 class="text-2xl font-extrabold mb-2">NUMA 拓扑</h2>
+        <h2 class="text-2xl font-extrabold mb-2">GPU 拓扑</h2>
+        <p class="text-slate-400 mb-2 text-sm">基于 nvidia-smi topo -m 输出，展示 GPU/NIC 互联拓扑、CPU Affinity 与 NUMA 绑定。</p>
         <div id="numa-hint" class="hint-text mb-4"></div>
         <div id="numa-content"></div>
       </section>
@@ -116,10 +124,14 @@
             <div>
               <label class="text-xs text-slate-400 block mb-1">Server 主机</label>
               <select id="ib-server-select" class="ib-select w-full"></select>
+              <label class="text-xs text-slate-400 block mb-1 mt-2">Server IB 网卡</label>
+              <select id="ib-server-card" class="ib-select w-full"><option value="">全部（自动配对）</option></select>
             </div>
             <div>
               <label class="text-xs text-slate-400 block mb-1">Client 主机</label>
               <select id="ib-client-select" class="ib-select w-full"></select>
+              <label class="text-xs text-slate-400 block mb-1 mt-2">Client IB 网卡</label>
+              <select id="ib-client-card" class="ib-select w-full"><option value="">全部（自动配对）</option></select>
             </div>
           </div>
           <div class="flex flex-wrap gap-4 items-center mb-4">
@@ -183,6 +195,7 @@
     </main>
   </div>
 
+  <input type="file" id="key-file-input" class="hidden">
   <script src="/static/app.js"></script>
 </body>
 </html>
