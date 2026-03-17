@@ -1,4 +1,4 @@
-# 虚拟环境，不提交到仓库
+# 虚拟环境
 .venv/
 venv/
 env/
@@ -11,13 +11,34 @@ __pycache__/
 dist/
 build/
 
-# 本地/环境
+# 本地/环境配置
 .env
+.env.*
 *.local
 
-# SSH 密钥（安全敏感，不提交）
+# ── 安全敏感文件（密钥、证书、凭据）──
 ssh_keys/
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.pub
+credentials.json
+secrets.yaml
+secrets.yml
 
-# 测试结果日志（本地生成，不提交）
+# 测试结果日志（本地生成）
 ib_test_results/
 dcgmi_results/
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
