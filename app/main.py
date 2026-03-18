@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.routers import dcgmi as dcgmi_router
@@ -33,6 +33,21 @@ app.add_middleware(
 
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    """
+    Return site favicon if present under static/.
+
+    Prefer ICO, fall back to PNG. If no icon is found, return 204 to
+    avoid noisy 404s while keeping browser behaviour simple.
+    """
+    for name in ("favicon.ico", "favicon.png"):
+        icon_path = STATIC_DIR / name
+        if icon_path.exists():
+            return FileResponse(icon_path)
+    return Response(status_code=204)
 
 
 @app.get("/", include_in_schema=False)

@@ -20,6 +20,12 @@ body {
     "Apple Color Emoji", "Segoe UI Emoji";
 }
 
+/* Fallback for Tailwind's `.hidden` utility so elements
+ * with class=\"hidden\"不会在 Tailwind CDN 加载失败时裸露出来。*/
+.hidden {
+  display: none !important;
+}
+
 .tech-bg {
   background-color: transparent;
 }
