@@ -60,6 +60,7 @@
     if (panelId === 'ib-topo') loadIbTopo();
     if (panelId === 'ib-cards' && selectedHostId !== null) loadIbCards();
     if (panelId === 'ib-test') { populateIbHostSelects(); loadIbHistory(); }
+    if (panelId === 'eth-test') { populateEthHostSelects(); loadEthHistory(); }
   }
 
   document.querySelectorAll('.panel-switch[data-panel]').forEach((btn) => {
@@ -1469,6 +1470,221 @@
     apiGet(`/api/dcgmi/results/${taskId}/summary`)
       .then((summary) => {
         detailEl.innerHTML = `<h4 class="text-md font-bold mb-2">诊断详情: ${escapeHtml(taskId)}</h4>` + renderDcgmiBatchSummary(summary);
+      })
+      .catch((err) => showFeedback(detailEl, err.message, 'error'));
+  }
+
+  // =========================================================================
+  // Ethernet Bandwidth Test
+  // =========================================================================
+
+  function populateEthHostSelects() {
+    const srcSel = document.getElementById('eth-src-host');
+    const dstSel = document.getElementById('eth-dst-host');
+    if (!srcSel || !dstSel) return;
+
+    apiGet('/api/hosts')
+      .then((data) => {
+        const hosts = (data.hosts || []).filter(
+          (h) => h.device_type === 'GPU' || h.device_type === 'CPU'
+        );
+        const optHtml = hosts.map((h) => {
+          const label = `${h.host_ip} (${h.hostname || h.device_type})`;
+          return `<option value="${h.id}">${escapeHtml(label)}</option>`;
+        }).join('');
+        srcSel.innerHTML = optHtml || '<option disabled>无 GPU/CPU 主机</option>';
+        dstSel.innerHTML = optHtml || '<option disabled>无 GPU/CPU 主机</option>';
+        if (hosts.length >= 2) dstSel.selectedIndex = 1;
+      })
+      .catch(() => {});
+  }
+
+  function ethPassBadge(passed) {
+    if (passed) return '<span class="badge-pass">PASS</span>';
+    return '<span class="badge-fail">FAIL</span>';
+  }
+
+  function renderEthSingleResult(r) {
+    let html = '<div class="topo-summary-grid mb-4">';
+    html += renderTopoStat(r.bandwidth || 'Unknown', '带宽', r.passed ? '#4ade80' : '#f87171');
+    html += renderTopoStat(r.src_ip, '源主机', '#e2e8f0');
+    html += renderTopoStat(r.dst_ip, '目标主机', '#e2e8f0');
+    html += '</div>';
+    html += `<div class="mb-2">${ethPassBadge(r.passed)} 阈值: &ge; ${46} Gbits/sec</div>`;
+    if (r.error) {
+      html += `<div class="feedback error">${escapeHtml(r.error)}</div>`;
+    }
+    return html;
+  }
+
+  document.getElementById('btn-eth-single-test').addEventListener('click', async () => {
+    const srcSel = document.getElementById('eth-src-host');
+    const dstSel = document.getElementById('eth-dst-host');
+    const resultEl = document.getElementById('eth-single-result');
+
+    const srcId = srcSel.value;
+    const dstId = dstSel.value;
+    if (!srcId || !dstId) {
+      showFeedback(resultEl, '请选择源主机和目标主机', 'error');
+      return;
+    }
+    if (srcId === dstId) {
+      showFeedback(resultEl, '源主机和目标主机不能相同', 'error');
+      return;
+    }
+
+    resultEl.innerHTML = '<div class="ib-running"><div class="spinner"></div><span>正在执行 iperf 带宽测试，预计需要 30~60 秒...</span></div>';
+
+    try {
+      const resp = await fetch('/api/eth/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ src_host_id: Number(srcId), dst_host_id: Number(dstId) }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.detail || resp.statusText);
+      }
+      const data = await resp.json();
+      resultEl.innerHTML = renderEthSingleResult(data);
+      loadEthHistory();
+    } catch (err) {
+      showFeedback(resultEl, err.message, 'error');
+    }
+  });
+
+  // Batch test
+  document.getElementById('btn-eth-batch-test').addEventListener('click', async () => {
+    const statusEl = document.getElementById('eth-batch-status');
+    const resultEl = document.getElementById('eth-batch-result');
+    const modeSel = document.getElementById('eth-batch-mode');
+    const mode = modeSel.value;
+
+    statusEl.innerHTML = '<div class="ib-running"><div class="spinner"></div><span>正在启动批量以太网测试...</span></div>';
+    resultEl.innerHTML = '';
+
+    try {
+      const resp = await fetch('/api/eth/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.detail || resp.statusText);
+      }
+      const data = await resp.json();
+      pollEthBatchStatus(data.task_id);
+    } catch (err) {
+      showFeedback(statusEl, err.message, 'error');
+    }
+  });
+
+  function pollEthBatchStatus(taskId) {
+    const statusEl = document.getElementById('eth-batch-status');
+    const resultEl = document.getElementById('eth-batch-result');
+
+    const poll = () => {
+      apiGet(`/api/eth/batch/${taskId}/status`)
+        .then((s) => {
+          if (s.status === 'running') {
+            statusEl.innerHTML = `<div class="ib-running"><div class="spinner"></div><span>测试中 ${s.completed_pairs || 0} / ${s.total_pairs || '?'} 对...</span></div>`;
+            setTimeout(poll, 5000);
+          } else if (s.status === 'completed') {
+            statusEl.innerHTML = '<div class="feedback success">批量测试已完成</div>';
+            apiGet(`/api/eth/results/${taskId}/summary`)
+              .then((summary) => {
+                resultEl.innerHTML = renderEthBatchSummary(summary);
+                loadEthHistory();
+              })
+              .catch((err) => showFeedback(resultEl, err.message, 'error'));
+          } else {
+            statusEl.innerHTML = `<div class="feedback error">测试失败: ${escapeHtml(s.error || '未知错误')}</div>`;
+          }
+        })
+        .catch((err) => {
+          statusEl.innerHTML = `<div class="feedback error">${escapeHtml(err.message)}</div>`;
+        });
+    };
+    setTimeout(poll, 3000);
+  }
+
+  function renderEthBatchSummary(summary) {
+    const results = summary.results || [];
+    if (results.length === 0) return '<p class="text-slate-400">无测试结果</p>';
+
+    let html = '<div class="topo-summary-grid mb-4">';
+    html += renderTopoStat(results.length, '总测试对', '#e2e8f0');
+    html += renderTopoStat(summary.pass_count || 0, '通过', '#4ade80');
+    html += renderTopoStat(summary.fail_count || 0, '未通过', '#f87171');
+    html += '</div>';
+
+    const th = ['源 IP', '源主机名', '目标 IP', '目标主机名', '带宽', '结果']
+      .map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+    const body = results.map((r) => {
+      const bgStyle = r.passed ? '' : ' style="background: rgba(127,29,29,0.1)"';
+      return `<tr${bgStyle}>
+        <td class="mono">${escapeHtml(r.src_ip || '')}</td>
+        <td class="mono">${escapeHtml(r.src_hostname || '-')}</td>
+        <td class="mono">${escapeHtml(r.dst_ip || '')}</td>
+        <td class="mono">${escapeHtml(r.dst_hostname || '-')}</td>
+        <td class="mono">${escapeHtml(r.bandwidth || 'Unknown')}</td>
+        <td>${ethPassBadge(r.passed)}</td>
+      </tr>`;
+    }).join('');
+
+    html += `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
+
+    if (summary.task_id) {
+      html += `<div class="mt-3"><button class="dl-btn" onclick="window.open('/api/eth/results/${escapeHtml(summary.task_id)}/log','_blank')">下载完整日志</button></div>`;
+    }
+
+    return html;
+  }
+
+  // Ethernet History
+  function loadEthHistory() {
+    const listEl = document.getElementById('eth-history-list');
+    if (!listEl) return;
+    apiGet('/api/eth/results')
+      .then((items) => {
+        if (!items || items.length === 0) {
+          listEl.innerHTML = '<p class="text-slate-400">暂无历史测试记录。</p>';
+          return;
+        }
+        const th = ['任务ID', '模式', '时间', '状态', '通过', '失败', '操作']
+          .map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+        const body = items.map((item) => {
+          const modeLabel = item.mode === 'fullmesh' ? '全网格' : (item.mode === 'sequential' ? '顺序' : (item.mode || '-'));
+          return `<tr class="eth-history-row" data-task-id="${escapeHtml(item.task_id || '')}">
+            <td class="mono">${escapeHtml(item.task_id || '-')}</td>
+            <td class="mono">${escapeHtml(modeLabel)}</td>
+            <td class="mono">${item.started_at ? item.started_at.replace('T', ' ').substring(0, 19) : '-'}</td>
+            <td class="mono">${escapeHtml(item.status || '-')}</td>
+            <td class="mono">${item.pass_count || 0}</td>
+            <td class="mono">${item.fail_count || 0}</td>
+            <td><button class="dl-btn" onclick="event.stopPropagation();window.open('/api/eth/results/${escapeHtml(item.task_id || '')}/log','_blank')">日志</button></td>
+          </tr>`;
+        }).join('');
+        listEl.innerHTML = `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
+
+        listEl.querySelectorAll('.eth-history-row').forEach((tr) => {
+          tr.addEventListener('click', () => {
+            const taskId = tr.getAttribute('data-task-id');
+            if (taskId) loadEthHistoryDetail(taskId);
+          });
+        });
+      })
+      .catch(() => { listEl.innerHTML = ''; });
+  }
+
+  function loadEthHistoryDetail(taskId) {
+    const detailEl = document.getElementById('eth-history-detail');
+    if (!detailEl) return;
+    detailEl.innerHTML = '<p class="text-slate-400">加载中...</p>';
+    apiGet(`/api/eth/results/${taskId}/summary`)
+      .then((summary) => {
+        detailEl.innerHTML = `<h4 class="text-md font-bold mb-2">测试详情: ${escapeHtml(taskId)}</h4>` + renderEthBatchSummary(summary);
       })
       .catch((err) => showFeedback(detailEl, err.message, 'error'));
   }

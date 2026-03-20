@@ -35,6 +35,7 @@ secrets.yml
 # 测试结果日志（本地生成）
 ib_test_results/
 dcgmi_results/
+eth_test_results/
 
 # IDE / OS
 .DS_Store

@@ -19,6 +19,7 @@
 | **版本信息** | 固件/驱动版本 | 查询 nvidia-smi、CUDA、驱动、OS 内核等版本 |
 | **指标 & 巡检** | GPU 实时指标 + 阈值巡检 | 查看温度/功耗/显存/利用率，支持阈值告警巡检 |
 | **DCGMI 诊断** | GPU 健康诊断 | Level 1 / Level 2 诊断，支持单机和批量模式 |
+| **以太网测试** | GPU/CPU 带宽测试 | 基于 iperf 测试 GPU/CPU 主机以太网带宽，支持单对与批量模式（阈值 >= 46 Gbits/sec） |
 | **IB 拓扑** | InfiniBand 拓扑查看 | 交换机拓扑与连接关系展示 |
 | **IB 网卡** | IB 网卡发现 | 通过 `ibstat` / `mst status` 发现 200G/400G IB 网卡 |
 | **IB 测试** | 带宽/延迟性能测试 | 单对测试 + 批量自动配对并行测试，结果可下载 |
@@ -154,13 +155,32 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
-## UI 特性
+## 以太网测试
 
-- **深色科技风界面**：渐变背景、毛玻璃卡片、流光标题
-- **二级折叠导航**：GPU 检查与 InfiniBand 为一级分组，展开后显示子功能
-- **一级按钮青色调、二级按钮紫色调**，视觉层次分明
-- **拖拽导入 Excel**：选择或拖拽文件后自动导入，无需手动点击
-- **密码认证设备自动隐藏密钥上传按钮**
+侧边栏的「以太网测试」用于在 **GPU/CPU 服务器之间**进行以太网带宽测试（交换机与安全设备不参与）。
+
+基于远程主机上安装的 `iperf`/`iperf3` 工具运行测试，当前实现的阈值判定为：
+- **PASS**：带宽聚合值 >= **46 Gbits/sec**
+
+### 单对测试
+
+在页面选择：
+- 源主机（Source）
+- 目标主机（Destination）
+
+点击「开始测试」后，对目标主机启动 iperf server，然后在源主机执行 iperf client 测试，并在页面展示带宽与 PASS/FAIL。
+
+### 批量测试
+
+点击「批量测试」后，对所有已导入的 **GPU/CPU** 主机做批量配对并行测试（支持 `fullmesh` 全网格和顺序配对）。
+
+批量测试完成后会展示汇总结果，并提供下载完整日志的入口。
+
+### 测试日志
+
+每次以太网测试的日志保存在项目目录下 `eth_test_results/<task_id>/`，包含：
+- `summary.json`（结构化汇总）
+- `raw_log.txt`（完整 iperf 输出）
 
 ---
 
@@ -175,6 +195,6 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ## 安全说明
 
 - SSH 密钥文件保存在 `ssh_keys/`，已加入 `.gitignore`
-- 测试结果日志（`dcgmi_results/`、`ib_test_results/`）已加入 `.gitignore`
+- 测试结果日志（`dcgmi_results/`、`ib_test_results/`、`eth_test_results/`）已加入 `.gitignore`
 - API 返回的主机列表不包含密码和密钥路径（已脱敏）
 - `.gitignore` 已配置通用安全规则：排除 `*.pem`、`*.key`、`*.p12`、`id_rsa*`、`credentials.json`、`.env*` 等敏感文件类型

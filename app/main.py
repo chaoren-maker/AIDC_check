@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.routers import dcgmi as dcgmi_router
+from app.routers import eth as eth_router
 from app.routers import hosts as hosts_router
 from app.routers import ib as ib_router
 from app.routers import ib_topo as ib_topo_router
@@ -70,6 +71,7 @@ app.include_router(remote_router.router)
 app.include_router(ib_router.router)
 app.include_router(ib_topo_router.router)
 app.include_router(dcgmi_router.router)
+app.include_router(eth_router.router)
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

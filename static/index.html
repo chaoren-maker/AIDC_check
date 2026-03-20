@@ -16,7 +16,6 @@
         <h1 class="brand-title">AIDC <span class="brand-accent">巡检控制台</span></h1>
         <p class="brand-sub">AI Data Center Inspection</p>
       </div>
-
       <div class="mb-4 p-3 rounded-xl border border-cyan-400/20 bg-slate-900/50">
         <div class="text-xs text-slate-400">当前选择主机</div>
         <div id="selected-host-badge" class="mt-1 font-mono text-cyan-300 text-xs leading-tight break-all">未选择</div>
@@ -49,6 +48,8 @@
             <button class="panel-switch-sub" data-panel="ib-test">IB 测试</button>
           </div>
         </div>
+
+        <button class="panel-switch" data-panel="eth-test">以太网测试</button>
       </nav>
     </aside>
 
@@ -278,6 +279,59 @@
           <h3 class="text-lg font-bold mb-3">历史测试记录</h3>
           <div id="ib-history-list"></div>
           <div id="ib-history-detail" class="mt-4"></div>
+        </div>
+      </section>
+
+      <!-- Ethernet Bandwidth Test Panel -->
+      <section id="panel-eth-test" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
+        <h2 class="text-2xl font-extrabold mb-2">以太网带宽测试</h2>
+        <p class="text-slate-400 mb-4 text-sm">使用 iperf 测试 GPU/CPU 服务器之间的以太网带宽（20 并行线程，10 秒），阈值 &ge; 46 Gbits/sec 判定 PASS。仅针对 GPU 和 CPU 类型设备。</p>
+
+        <!-- Single pair test -->
+        <div class="mb-6 pb-6 border-b border-slate-700/50">
+          <h3 class="text-lg font-bold mb-3">单对测试</h3>
+          <div class="flex flex-wrap gap-4 items-end">
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">源主机</label>
+              <select id="eth-src-host" class="bg-slate-800 border border-slate-600 text-slate-200 text-sm rounded-lg px-3 py-2 min-w-[180px]"></select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">目标主机</label>
+              <select id="eth-dst-host" class="bg-slate-800 border border-slate-600 text-slate-200 text-sm rounded-lg px-3 py-2 min-w-[180px]"></select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
+              <button type="button" id="btn-eth-single-test" class="glow-btn px-5 py-2 rounded-xl font-semibold">开始测试</button>
+            </div>
+          </div>
+          <div id="eth-single-result" class="mt-4"></div>
+        </div>
+
+        <!-- Batch test -->
+        <div class="mb-6 pb-6 border-b border-slate-700/50">
+          <h3 class="text-lg font-bold mb-3">批量测试</h3>
+          <div class="flex flex-wrap gap-4 items-end">
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">测试模式</label>
+              <select id="eth-batch-mode" class="bg-slate-800 border border-slate-600 text-slate-200 text-sm rounded-lg px-3 py-2 min-w-[180px]">
+                <option value="fullmesh">全网格 (Full Mesh)</option>
+                <option value="sequential">顺序配对</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
+              <button type="button" id="btn-eth-batch-test" class="glow-btn px-5 py-2 rounded-xl font-semibold">批量测试</button>
+            </div>
+          </div>
+          <div id="eth-batch-status" class="mt-4"></div>
+          <div id="eth-batch-result" class="mt-4"></div>
+        </div>
+
+        <!-- Historical results -->
+        <div>
+          <h3 class="text-lg font-bold mb-3">历史测试记录</h3>
+          <div id="eth-history-list"></div>
+          <div id="eth-history-detail" class="mt-4"></div>
         </div>
       </section>
     </main>
