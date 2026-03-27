@@ -1478,6 +1478,71 @@
   // Ethernet Bandwidth Test
   // =========================================================================
 
+  let ethSingleAbort = null;
+  let ethBatchTaskIdActive = null;
+  let ethBatchTimers = { poll: null, tick: null };
+  let ethBatchStartedAtMs = 0;
+
+  function clearEthBatchTimers() {
+    if (ethBatchTimers.poll != null) clearTimeout(ethBatchTimers.poll);
+    if (ethBatchTimers.tick != null) clearInterval(ethBatchTimers.tick);
+    ethBatchTimers.poll = null;
+    ethBatchTimers.tick = null;
+  }
+
+  function setEthBatchUiRunning(running) {
+    const btnBatch = document.getElementById('btn-eth-batch-test');
+    const btnStop = document.getElementById('btn-eth-batch-stop');
+    const modeSel = document.getElementById('eth-batch-mode');
+    if (btnBatch) btnBatch.disabled = running;
+    if (modeSel) modeSel.disabled = running;
+    if (btnStop) {
+      if (running) {
+        btnStop.classList.remove('hidden');
+        btnStop.disabled = false;
+      } else {
+        btnStop.classList.add('hidden');
+        btnStop.disabled = false;
+      }
+    }
+  }
+
+  function initEthBatchProgressShell(statusEl) {
+    statusEl.innerHTML = `
+    <div class="eth-batch-live rounded-xl border border-cyan-400/20 bg-slate-900/40 p-4">
+      <div class="flex items-start gap-3">
+        <div class="spinner shrink-0 mt-1"></div>
+        <div class="min-w-0 flex-1">
+          <div class="text-slate-200">
+            已运行 <span id="eth-batch-elapsed" class="font-mono text-cyan-300">0</span> 秒
+            · 进度 <span id="eth-batch-nums" class="font-mono text-slate-300">0 / ?</span> 对
+          </div>
+          <div id="eth-batch-current" class="text-sm text-slate-400 mt-2">当前：—</div>
+          <div id="eth-batch-phase" class="text-xs text-slate-500 mt-1"></div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function updateEthBatchProgressFields(s) {
+    const nums = document.getElementById('eth-batch-nums');
+    const cur = document.getElementById('eth-batch-current');
+    const phase = document.getElementById('eth-batch-phase');
+    if (nums) nums.textContent = `${s.completed_pairs ?? 0} / ${s.total_pairs ?? '?'}`;
+    if (cur) cur.textContent = `当前：${s.current_pair ? s.current_pair : '（排队 / 启动中）'}`;
+    if (phase) phase.textContent = s.current_phase || '';
+    if (s.started_at) {
+      const t = Date.parse(s.started_at);
+      if (!Number.isNaN(t)) ethBatchStartedAtMs = t;
+    }
+  }
+
+  function tickEthBatchElapsed() {
+    const el = document.getElementById('eth-batch-elapsed');
+    if (!el || !ethBatchStartedAtMs) return;
+    el.textContent = String(Math.max(0, Math.floor((Date.now() - ethBatchStartedAtMs) / 1000)));
+  }
+
   function populateEthHostSelects() {
     const srcSel = document.getElementById('eth-src-host');
     const dstSel = document.getElementById('eth-dst-host');
@@ -1521,6 +1586,9 @@
     const srcSel = document.getElementById('eth-src-host');
     const dstSel = document.getElementById('eth-dst-host');
     const resultEl = document.getElementById('eth-single-result');
+    const btnStop = document.getElementById('btn-eth-single-stop');
+    const btnStart = document.getElementById('btn-eth-single-test');
+    const hint = document.getElementById('eth-single-hint');
 
     const srcId = srcSel.value;
     const dstId = dstSel.value;
@@ -1533,13 +1601,26 @@
       return;
     }
 
-    resultEl.innerHTML = '<div class="ib-running"><div class="spinner"></div><span>正在执行 iperf 带宽测试，预计需要 30~60 秒...</span></div>';
+    if (ethSingleAbort) ethSingleAbort.abort();
+    ethSingleAbort = new AbortController();
+    if (btnStop) btnStop.classList.remove('hidden');
+    if (hint) hint.classList.remove('hidden');
+    if (btnStart) btnStart.disabled = true;
+
+    let sec = 0;
+    resultEl.innerHTML = `<div class="ib-running"><div class="spinner"></div><span>正在执行 iperf 带宽测试… 已等待 <span id="eth-single-sec" class="font-mono text-cyan-300">0</span> 秒（约 30~90 秒）</span></div>`;
+    const secTimer = setInterval(() => {
+      sec += 1;
+      const el = document.getElementById('eth-single-sec');
+      if (el) el.textContent = String(sec);
+    }, 1000);
 
     try {
       const resp = await fetch('/api/eth/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ src_host_id: Number(srcId), dst_host_id: Number(dstId) }),
+        signal: ethSingleAbort.signal,
       });
       if (!resp.ok) {
         const err = await resp.json();
@@ -1549,8 +1630,22 @@
       resultEl.innerHTML = renderEthSingleResult(data);
       loadEthHistory();
     } catch (err) {
-      showFeedback(resultEl, err.message, 'error');
+      if (err.name === 'AbortError') {
+        showFeedback(resultEl, '已取消本页等待。服务端上的单次测试可能仍在执行，请稍后刷新「历史测试记录」。', 'info');
+      } else {
+        showFeedback(resultEl, err.message, 'error');
+      }
+    } finally {
+      clearInterval(secTimer);
+      ethSingleAbort = null;
+      if (btnStop) btnStop.classList.add('hidden');
+      if (hint) hint.classList.add('hidden');
+      if (btnStart) btnStart.disabled = false;
     }
+  });
+
+  document.getElementById('btn-eth-single-stop').addEventListener('click', () => {
+    if (ethSingleAbort) ethSingleAbort.abort();
   });
 
   // Batch test
@@ -1576,22 +1671,61 @@
       const data = await resp.json();
       pollEthBatchStatus(data.task_id);
     } catch (err) {
+      setEthBatchUiRunning(false);
       showFeedback(statusEl, err.message, 'error');
     }
   });
 
+  document.getElementById('btn-eth-batch-stop').addEventListener('click', () => {
+    if (!ethBatchTaskIdActive) return;
+    const btnStop = document.getElementById('btn-eth-batch-stop');
+    fetch(`/api/eth/batch/${ethBatchTaskIdActive}/cancel`, { method: 'POST' })
+      .then((r) => {
+        if (!r.ok) return r.json().then((j) => Promise.reject(new Error(j.detail || r.statusText)));
+        const phase = document.getElementById('eth-batch-phase');
+        if (phase) phase.textContent = '已发送停止请求，将在当前这一对测试结束后停止后续对…';
+        if (btnStop) btnStop.disabled = true;
+      })
+      .catch((e) => {
+        showFeedback(document.getElementById('eth-batch-status'), e.message, 'error');
+        if (btnStop) btnStop.disabled = false;
+      });
+  });
+
   function pollEthBatchStatus(taskId) {
+    clearEthBatchTimers();
+    ethBatchTaskIdActive = taskId;
+    ethBatchStartedAtMs = Date.now();
+
     const statusEl = document.getElementById('eth-batch-status');
     const resultEl = document.getElementById('eth-batch-result');
 
-    const poll = () => {
+    setEthBatchUiRunning(true);
+    initEthBatchProgressShell(statusEl);
+    ethBatchTimers.tick = setInterval(tickEthBatchElapsed, 1000);
+    tickEthBatchElapsed();
+
+    const schedulePoll = (delay) => {
+      ethBatchTimers.poll = setTimeout(doPoll, delay);
+    };
+
+    function finishBatchUi() {
+      clearEthBatchTimers();
+      setEthBatchUiRunning(false);
+      ethBatchTaskIdActive = null;
+    }
+
+    function doPoll() {
+      ethBatchTimers.poll = null;
       apiGet(`/api/eth/batch/${taskId}/status`)
         .then((s) => {
+          updateEthBatchProgressFields(s);
           if (s.status === 'running') {
-            statusEl.innerHTML = `<div class="ib-running"><div class="spinner"></div><span>测试中 ${s.completed_pairs || 0} / ${s.total_pairs || '?'} 对...</span></div>`;
-            setTimeout(poll, 5000);
-          } else if (s.status === 'completed') {
-            statusEl.innerHTML = '<div class="feedback success">批量测试已完成</div>';
+            schedulePoll(5000);
+          } else if (s.status === 'completed' || s.status === 'cancelled') {
+            finishBatchUi();
+            const msg = s.status === 'cancelled' ? '批量测试已停止（已保存已完成部分）' : '批量测试已完成';
+            statusEl.innerHTML = `<div class="feedback ${s.status === 'cancelled' ? 'info' : 'success'}">${escapeHtml(msg)}</div>`;
             apiGet(`/api/eth/results/${taskId}/summary`)
               .then((summary) => {
                 resultEl.innerHTML = renderEthBatchSummary(summary);
@@ -1599,21 +1733,29 @@
               })
               .catch((err) => showFeedback(resultEl, err.message, 'error'));
           } else {
+            finishBatchUi();
             statusEl.innerHTML = `<div class="feedback error">测试失败: ${escapeHtml(s.error || '未知错误')}</div>`;
           }
         })
         .catch((err) => {
+          finishBatchUi();
           statusEl.innerHTML = `<div class="feedback error">${escapeHtml(err.message)}</div>`;
         });
-    };
-    setTimeout(poll, 3000);
+    }
+
+    schedulePoll(800);
   }
 
   function renderEthBatchSummary(summary) {
     const results = summary.results || [];
     if (results.length === 0) return '<p class="text-slate-400">无测试结果</p>';
 
-    let html = '<div class="topo-summary-grid mb-4">';
+    let html = '';
+    if (summary.status === 'cancelled') {
+      html += '<div class="feedback info mb-4">本任务由用户停止，以下为已完成测试对的结果。</div>';
+    }
+
+    html += '<div class="topo-summary-grid mb-4">';
     html += renderTopoStat(results.length, '总测试对', '#e2e8f0');
     html += renderTopoStat(summary.pass_count || 0, '通过', '#4ade80');
     html += renderTopoStat(summary.fail_count || 0, '未通过', '#f87171');

@@ -17,7 +17,6 @@ import logging
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
 
@@ -241,6 +240,9 @@ def run_eth_batch(
         "results": [],
         "raw_log": "",
         "error": None,
+        "cancel_requested": False,
+        "current_pair": "",
+        "current_phase": "准备中",
     }
     _batch_tasks[task_id] = task_record
 
@@ -249,17 +251,36 @@ def run_eth_batch(
             all_results: list[dict] = []
             all_raw_log: list[str] = []
 
-            for src, dst in pairs:
+            for _idx, (src, dst) in enumerate(pairs):
+                if task_record.get("cancel_requested"):
+                    task_record["results"] = all_results
+                    task_record["raw_log"] = "\n".join(all_raw_log)
+                    task_record["status"] = "cancelled"
+                    task_record["error"] = "用户已停止（已保存已完成的对）"
+                    task_record["current_pair"] = ""
+                    task_record["current_phase"] = "已停止"
+                    task_record["finished_at"] = datetime.now().isoformat()
+                    from app.eth_results_store import save_result
+                    save_result(task_record)
+                    return
+
+                src_ip = src.get("host_ip", "")
+                dst_ip = dst.get("host_ip", "")
+                task_record["current_pair"] = f"{src_ip} → {dst_ip}"
+                task_record["current_phase"] = "iperf 测试中（单对约 10~60 秒，含重试与清理）"
                 r = run_single_pair(src["id"], dst["id"])
                 all_results.append(r)
                 all_raw_log.append(r.get("raw_log", ""))
                 task_record["completed_pairs"] += 1
+                task_record["current_phase"] = "本对已完成，等待间隔后进入下一对"
 
                 time.sleep(3)
 
             task_record["results"] = all_results
             task_record["raw_log"] = "\n".join(all_raw_log)
             task_record["status"] = "completed"
+            task_record["current_pair"] = ""
+            task_record["current_phase"] = "全部完成"
             task_record["finished_at"] = datetime.now().isoformat()
 
             from app.eth_results_store import save_result
@@ -270,6 +291,8 @@ def run_eth_batch(
             task_record["status"] = "failed"
             task_record["error"] = str(exc)
             task_record["finished_at"] = datetime.now().isoformat()
+            task_record["current_pair"] = ""
+            task_record["current_phase"] = "失败"
 
     t = threading.Thread(target=_execute, daemon=True)
     t.start()
@@ -280,3 +303,13 @@ def run_eth_batch(
 def get_batch_task(task_id: str) -> dict[str, Any] | None:
     """Return in-memory task record, or None if not found / already finished."""
     return _batch_tasks.get(task_id)
+
+
+def request_cancel_batch(task_id: str) -> bool:
+    """Request cancellation of a running batch. Checked between pairs only."""
+    task = _batch_tasks.get(task_id)
+    if not task or task.get("status") != "running":
+        return False
+    task["cancel_requested"] = True
+    task["current_phase"] = "收到停止请求，将在当前对结束后停止…"
+    return True

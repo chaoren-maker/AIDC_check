@@ -301,9 +301,13 @@
             </div>
             <div>
               <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
-              <button type="button" id="btn-eth-single-test" class="glow-btn px-5 py-2 rounded-xl font-semibold">开始测试</button>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" id="btn-eth-single-test" class="glow-btn px-5 py-2 rounded-xl font-semibold">开始测试</button>
+                <button type="button" id="btn-eth-single-stop" class="hidden px-5 py-2 rounded-xl font-semibold border border-rose-400/50 text-rose-300 hover:bg-rose-500/10">停止</button>
+              </div>
             </div>
           </div>
+          <p id="eth-single-hint" class="text-xs text-slate-500 mt-2 hidden">测试中：可点击「停止」仅取消本页等待；远端 iperf 可能仍会跑完当前一轮。</p>
           <div id="eth-single-result" class="mt-4"></div>
         </div>
 
@@ -320,9 +324,13 @@
             </div>
             <div>
               <label class="text-xs text-slate-400 block mb-1">&nbsp;</label>
-              <button type="button" id="btn-eth-batch-test" class="glow-btn px-5 py-2 rounded-xl font-semibold">批量测试</button>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" id="btn-eth-batch-test" class="glow-btn px-5 py-2 rounded-xl font-semibold">批量测试</button>
+                <button type="button" id="btn-eth-batch-stop" class="hidden px-5 py-2 rounded-xl font-semibold border border-rose-400/50 text-rose-300 hover:bg-rose-500/10">停止批量</button>
+              </div>
             </div>
           </div>
+          <p class="text-xs text-slate-500 mt-2">批量测试耗时较长；下方会显示已运行秒数、进度与当前正在测的一对。点击「停止批量」会在<strong>当前这一对测完后</strong>停止后续对。</p>
           <div id="eth-batch-status" class="mt-4"></div>
           <div id="eth-batch-result" class="mt-4"></div>
         </div>

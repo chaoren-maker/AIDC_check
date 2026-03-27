@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.eth_results_store import get_log_path, get_summary, list_results, save_result
-from app.remote.eth_test import get_batch_task, run_eth_batch, run_single_pair
+from app.remote.eth_test import get_batch_task, request_cancel_batch, run_eth_batch, run_single_pair
 from app.ssh_runner import SSHRunnerError
 
 router = APIRouter(prefix="/api/eth", tags=["ethernet"])
@@ -90,17 +90,46 @@ async def get_batch_status(task_id: str):
             "status": task["status"],
             "total_pairs": task.get("total_pairs", 0),
             "completed_pairs": task.get("completed_pairs", 0),
+            "started_at": task.get("started_at"),
+            "current_pair": task.get("current_pair", ""),
+            "current_phase": task.get("current_phase", ""),
+            "cancel_requested": task.get("cancel_requested", False),
             "error": task.get("error"),
         }
     summary = get_summary(task_id)
     if summary:
+        total = summary.get("total_pairs", 0)
+        st = summary.get("status", "completed")
+        results = summary.get("results") or []
+        if st == "completed":
+            done = total
+        else:
+            done = len(results)
         return {
             "task_id": task_id,
-            "status": summary.get("status", "completed"),
-            "total_pairs": summary.get("total_pairs", 0),
-            "completed_pairs": summary.get("total_pairs", 0),
+            "status": st,
+            "total_pairs": total,
+            "completed_pairs": done,
+            "started_at": summary.get("started_at"),
+            "current_pair": "",
+            "current_phase": "",
+            "cancel_requested": False,
             "error": summary.get("error"),
         }
+    raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+
+@router.post("/batch/{task_id}/cancel")
+async def post_batch_cancel(task_id: str):
+    """Request to stop a running batch (takes effect after current pair finishes)."""
+    if request_cancel_batch(task_id):
+        return {"ok": True, "message": "已发送停止请求"}
+    task = get_batch_task(task_id)
+    if task and task.get("status") != "running":
+        raise HTTPException(status_code=400, detail="任务未在运行中，无法停止")
+    summary = get_summary(task_id)
+    if summary:
+        raise HTTPException(status_code=400, detail="任务已结束")
     raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
 
