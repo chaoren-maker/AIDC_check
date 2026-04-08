@@ -8,7 +8,8 @@ from io import BytesIO
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from openpyxl import load_workbook
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook, load_workbook
 
 from app.excel_parser import ExcelParseError, parse_hosts_excel
 from app.host_store import (
@@ -55,6 +56,63 @@ async def import_hosts(file: UploadFile = File(...)):
         )
     replace_hosts(hosts)
     return {"hosts": get_hosts_safe(), "message": f"Imported {len(hosts)} host(s)."}
+
+
+@router.get("/template")
+async def export_hosts_template():
+    """Download an Excel template for host import."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "hosts"
+    headers = [
+        "host_ip",
+        "hostname",
+        "username",
+        "password",
+        "device_type",
+        "auth_type",
+        "key_path",
+        "ssh_port",
+        "remark",
+    ]
+    ws.append(headers)
+    ws.append(
+        [
+            "10.0.0.10",
+            "gpu-node-01",
+            "root",
+            "",
+            "GPU",
+            "key",
+            "/home/root/.ssh/id_rsa",
+            22,
+            "示例：密钥认证",
+        ]
+    )
+    ws.append(
+        [
+            "10.0.0.20",
+            "cpu-node-01",
+            "admin",
+            "your_password",
+            "CPU",
+            "password",
+            "",
+            22,
+            "示例：密码认证",
+        ]
+    )
+
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    filename = "aidc_hosts_template.xlsx"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
 
 
 @router.delete("/{host_id}")

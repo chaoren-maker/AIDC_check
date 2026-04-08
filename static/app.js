@@ -2,6 +2,10 @@
   let selectedHostId = null;
   let selectedHostLabel = '';
   let selectedFile = null;
+  const PHASE1_ENABLED = (() => {
+    const p = new URLSearchParams(window.location.search);
+    return p.get('phase1') !== 'off' && p.get('legacy') !== '1';
+  })();
 
   const els = {
     selectedHostBadge: document.getElementById('selected-host-badge'),
@@ -61,6 +65,10 @@
     if (panelId === 'ib-cards' && selectedHostId !== null) loadIbCards();
     if (panelId === 'ib-test') { populateIbHostSelects(); loadIbHistory(); }
     if (panelId === 'eth-test') { populateEthHostSelects(); loadEthHistory(); }
+    if (panelId === 'dashboard' && PHASE1_ENABLED) startDashboardAutoRefresh();
+    if (panelId !== 'dashboard') stopDashboardAutoRefresh();
+    if (panelId === 'logs' && PHASE1_ENABLED) loadUnifiedLogs();
+    if (panelId === 'oneclick' && PHASE1_ENABLED) initOneclickPanel();
   }
 
   document.querySelectorAll('.panel-switch[data-panel]').forEach((btn) => {
@@ -776,7 +784,7 @@
       ]);
 
       html += buildTableWithBadge(
-        ['Server', 'Client', '速率', 'Server BW(Gb/s)', 'Client BW(Gb/s)', '阈值(Gb/s)', '结果'],
+        ['Server', 'Client', 'IB速率', 'Server BW(Gb/s)', 'Client BW(Gb/s)', '阈值(Gb/s)', '结果'],
         rows,
         data.pairs.map((p) => p.passed)
       );
@@ -798,7 +806,7 @@
         }
       }
       html += buildTableWithBadge(
-        ['Server', 'Client', '速率', '消息大小', '延迟(μs)', '阈值(μs)', '结果'],
+        ['Server', 'Client', 'IB速率', '消息大小', '延迟(μs)', '阈值(μs)', '结果'],
         rows.map((r) => r.cells),
         rows.map((r) => r.passed)
       );
@@ -846,7 +854,7 @@
       }
       if (rows.length) {
         html += buildTableWithBadge(
-          ['Server', 'Client', '速率', 'Server BW(Gb/s)', 'Client BW(Gb/s)', '阈值(Gb/s)', '结果'],
+          ['Server', 'Client', 'IB速率', 'Server BW(Gb/s)', 'Client BW(Gb/s)', '阈值(Gb/s)', '结果'],
           rows, passedArr
         );
       }
@@ -870,7 +878,7 @@
       }
       if (rows.length) {
         html += buildTableWithBadge(
-          ['Server', 'Client', '速率', '消息大小', '延迟(μs)', '阈值(μs)', '结果'],
+          ['Server', 'Client', 'IB速率', '消息大小', '延迟(μs)', '阈值(μs)', '结果'],
           rows, passedArr
         );
       }
@@ -1832,9 +1840,578 @@
   }
 
   // =========================================================================
+  // Phase1 Feature Toggle + Dashboard + Unified Logs + One-click
+  // =========================================================================
+
+  function mapLimit(items, limit, worker) {
+    return new Promise((resolve) => {
+      const out = new Array(items.length);
+      let idx = 0;
+      let running = 0;
+      const total = items.length;
+      if (total === 0) {
+        resolve(out);
+        return;
+      }
+      const launch = () => {
+        while (running < limit && idx < total) {
+          const cur = idx++;
+          running += 1;
+          Promise.resolve(worker(items[cur], cur))
+            .then((v) => { out[cur] = v; })
+            .catch((e) => { out[cur] = { error: e?.message || 'error' }; })
+            .finally(() => {
+              running -= 1;
+              if (idx >= total && running === 0) resolve(out);
+              else launch();
+            });
+        }
+      };
+      launch();
+    });
+  }
+
+  function formatTs(ts) {
+    if (!ts) return '-';
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return String(ts);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
+  function applyPhase1Visibility() {
+    if (PHASE1_ENABLED) return;
+    document.querySelectorAll('.phase1-feature').forEach((el) => {
+      el.classList.add('hidden');
+    });
+  }
+
+  // ---- Dashboard
+  let dashboardTimer = null;
+  let dashboardPaused = false;
+  let dashboardBusy = false;
+  let dashboardBound = false;
+  const DASHBOARD_INTERVAL_MS = 15000;
+
+  function setDashboardTimeLabel(text) {
+    const el = document.getElementById('dashboard-last-update');
+    if (!el) return;
+    el.textContent = text;
+  }
+
+  function renderDashboardSummary(cards) {
+    const el = document.getElementById('dashboard-summary');
+    if (!el) return;
+    let html = '';
+    html += renderTopoStat(cards.total_hosts, '总设备', '#e2e8f0');
+    html += renderTopoStat(cards.gpu_hosts, 'GPU 主机', '#a5f3fc');
+    html += renderTopoStat(cards.cpu_hosts, 'CPU 主机', '#c4b5fd');
+    html += renderTopoStat(`${cards.online_hosts}/${cards.total_hosts}`, '在线设备', '#4ade80');
+    html += renderTopoStat(cards.alert_hosts, '告警主机', cards.alert_hosts > 0 ? '#fbbf24' : '#4ade80');
+    html += renderTopoStat(cards.metric_failed, '指标失败', cards.metric_failed > 0 ? '#f87171' : '#4ade80');
+    el.innerHTML = html;
+  }
+
+  function renderDashboardTopList(containerId, rows, metricName) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    if (!rows.length) {
+      el.innerHTML = '<p class="text-slate-400 text-sm">暂无数据</p>';
+      return;
+    }
+    const body = rows.map((r, i) => `<tr data-host-id="${r.host.id}" class="dash-row">
+      <td class="mono">${i + 1}</td>
+      <td class="mono">${escapeHtml(r.host.hostname || '-')}</td>
+      <td class="mono">${escapeHtml(r.host.host_ip || '-')}</td>
+      <td class="mono">${escapeHtml(r.value)}</td>
+    </tr>`).join('');
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>#</th><th>主机</th><th>IP</th><th>${escapeHtml(metricName)}</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    el.querySelectorAll('.dash-row').forEach((tr) => {
+      tr.addEventListener('click', () => {
+        const hostId = Number(tr.getAttribute('data-host-id'));
+        const target = rows.find((r) => r.host.id === hostId)?.host;
+        if (!target) return;
+        selectedHostId = target.id;
+        selectedHostLabel = target.hostname ? `${target.hostname} (${target.host_ip})` : target.host_ip;
+        setSelectedHostBadge();
+        refreshHostList();
+        showPanel('metrics');
+      });
+    });
+  }
+
+  async function refreshDashboardData() {
+    if (!PHASE1_ENABLED || dashboardBusy || dashboardPaused) return;
+    dashboardBusy = true;
+    const errEl = document.getElementById('dashboard-errors');
+    if (errEl) errEl.innerHTML = '';
+    setDashboardTimeLabel('最近刷新：刷新中...');
+    try {
+      const hostData = await apiGet('/api/hosts');
+      const hosts = hostData.hosts || [];
+      const gpuHosts = hosts.filter((h) => h.device_type === 'GPU');
+      const cpuHosts = hosts.filter((h) => h.device_type === 'CPU');
+
+      const pingRows = await mapLimit(hosts, 10, async (h) => {
+        try {
+          const p = await apiGet(`/api/hosts/${h.id}/ping`);
+          return { host: h, online: !!p.online };
+        } catch (_) {
+          return { host: h, online: false };
+        }
+      });
+      const onlineMap = new Map(pingRows.map((p) => [p.host.id, p.online]));
+
+      const metricRows = await mapLimit(gpuHosts, 6, async (h) => {
+        if (!onlineMap.get(h.id)) {
+          return { host: h, ok: false, reason: 'offline' };
+        }
+        try {
+          const m = await apiGet(`/api/hosts/${h.id}/gpu/metrics`);
+          const gpus = m.gpus || [];
+          if (!gpus.length) return { host: h, ok: false, reason: 'no gpu' };
+          const avgTemp = Math.round(gpus.reduce((s, g) => s + Number(g.temperature_gpu || 0), 0) / gpus.length);
+          const avgMem = Math.round(gpus.reduce((s, g) => s + Number(g.memory_used_percent || 0), 0) / gpus.length);
+          const avgUtil = Math.round(gpus.reduce((s, g) => s + Number(g.utilization_gpu_percent || 0), 0) / gpus.length);
+          const alert = avgTemp >= 85 || avgMem >= 90;
+          return { host: h, ok: true, avgTemp, avgMem, avgUtil, alert };
+        } catch (e) {
+          return { host: h, ok: false, reason: e.message || 'metrics error' };
+        }
+      });
+
+      const metricOk = metricRows.filter((m) => m.ok);
+      const metricFailed = metricRows.length - metricOk.length;
+      const alertHosts = metricOk.filter((m) => m.alert).length;
+      const onlineHosts = pingRows.filter((p) => p.online).length;
+
+      renderDashboardSummary({
+        total_hosts: hosts.length,
+        gpu_hosts: gpuHosts.length,
+        cpu_hosts: cpuHosts.length,
+        online_hosts: onlineHosts,
+        alert_hosts: alertHosts,
+        metric_failed: metricFailed,
+      });
+
+      const topTemp = [...metricOk].sort((a, b) => b.avgTemp - a.avgTemp).slice(0, 5).map((m) => ({ host: m.host, value: `${m.avgTemp} °C` }));
+      const topMem = [...metricOk].sort((a, b) => b.avgMem - a.avgMem).slice(0, 5).map((m) => ({ host: m.host, value: `${m.avgMem} %` }));
+      const topUtil = [...metricOk].sort((a, b) => b.avgUtil - a.avgUtil).slice(0, 5).map((m) => ({ host: m.host, value: `${m.avgUtil} %` }));
+      renderDashboardTopList('dashboard-top-temp', topTemp, '温度');
+      renderDashboardTopList('dashboard-top-mem', topMem, '显存占用');
+      renderDashboardTopList('dashboard-top-util', topUtil, 'GPU 利用率');
+
+      const failedRows = metricRows.filter((m) => !m.ok);
+      if (errEl && failedRows.length) {
+        const brief = failedRows.slice(0, 8).map((m) => `${m.host.host_ip}: ${m.reason}`).join(' | ');
+        showFeedback(errEl, `部分主机指标未获取：${brief}${failedRows.length > 8 ? ' ...' : ''}`, 'info');
+      }
+
+      setDashboardTimeLabel(`最近刷新：${formatTs(new Date().toISOString())}`);
+    } catch (err) {
+      if (errEl) showFeedback(errEl, err.message || '刷新失败', 'error');
+      setDashboardTimeLabel('最近刷新：失败');
+    } finally {
+      dashboardBusy = false;
+    }
+  }
+
+  function bindDashboardControls() {
+    if (dashboardBound) return;
+    dashboardBound = true;
+    const btnRefresh = document.getElementById('btn-dashboard-refresh');
+    const btnToggle = document.getElementById('btn-dashboard-toggle');
+    if (btnRefresh) {
+      btnRefresh.addEventListener('click', () => {
+        if (dashboardPaused) return;
+        refreshDashboardData();
+      });
+    }
+    if (btnToggle) {
+      btnToggle.addEventListener('click', () => {
+        dashboardPaused = !dashboardPaused;
+        btnToggle.textContent = dashboardPaused ? '继续自动刷新' : '暂停自动刷新';
+        if (!dashboardPaused) refreshDashboardData();
+      });
+    }
+  }
+
+  function startDashboardAutoRefresh() {
+    if (!PHASE1_ENABLED) return;
+    bindDashboardControls();
+    if (!dashboardPaused) refreshDashboardData();
+    if (dashboardTimer) clearInterval(dashboardTimer);
+    dashboardTimer = setInterval(() => {
+      if (!dashboardPaused) refreshDashboardData();
+    }, DASHBOARD_INTERVAL_MS);
+  }
+
+  function stopDashboardAutoRefresh() {
+    if (dashboardTimer) {
+      clearInterval(dashboardTimer);
+      dashboardTimer = null;
+    }
+  }
+
+  // ---- Unified Logs
+  let unifiedLogs = [];
+  let logsBound = false;
+
+  function normalizeUnifiedLogs(moduleName, items) {
+    return (items || []).map((item) => {
+      const started = item.started_at || '';
+      const passCount = Number(item.pass_count || 0);
+      const failCount = Number(item.fail_count || 0);
+      const status = String(item.status || '-');
+      const mode = moduleName === 'eth' ? (item.mode || '-') : (item.test_type || item.level || '-');
+      return {
+        module: moduleName,
+        task_id: item.task_id || '',
+        started_at: started,
+        started_sort: Date.parse(started) || 0,
+        status,
+        mode,
+        pass_count: passCount,
+        fail_count: failCount,
+      };
+    });
+  }
+
+  function renderUnifiedLogsTable() {
+    const listEl = document.getElementById('logs-list');
+    const detailEl = document.getElementById('logs-detail');
+    if (!listEl) return;
+    const moduleVal = document.getElementById('logs-filter-module')?.value || 'all';
+    const statusVal = document.getElementById('logs-filter-status')?.value || 'all';
+    const kw = (document.getElementById('logs-filter-keyword')?.value || '').trim().toLowerCase();
+    const filtered = unifiedLogs.filter((r) => {
+      if (moduleVal !== 'all' && r.module !== moduleVal) return false;
+      if (statusVal !== 'all' && r.status !== statusVal) return false;
+      if (!kw) return true;
+      const text = `${r.task_id} ${r.mode} ${r.status} ${r.module}`.toLowerCase();
+      return text.includes(kw);
+    });
+    if (!filtered.length) {
+      listEl.innerHTML = '<p class="text-slate-400">暂无匹配记录。</p>';
+      if (detailEl) detailEl.innerHTML = '';
+      return;
+    }
+    const body = filtered.map((r) => `<tr class="unilog-row" data-module="${r.module}" data-task-id="${escapeHtml(r.task_id)}">
+      <td class="mono">${escapeHtml(r.module.toUpperCase())}</td>
+      <td class="mono">${escapeHtml(r.task_id)}</td>
+      <td class="mono">${escapeHtml(r.mode)}</td>
+      <td class="mono">${escapeHtml(r.status)}</td>
+      <td class="mono">${escapeHtml(formatTs(r.started_at))}</td>
+      <td class="mono">${r.pass_count}/${r.fail_count}</td>
+      <td><button class="dl-btn unilog-dl" data-module="${r.module}" data-task-id="${escapeHtml(r.task_id)}">日志</button></td>
+    </tr>`).join('');
+    listEl.innerHTML = `<div class="table-wrap"><table><thead><tr><th>模块</th><th>任务ID</th><th>类型/模式</th><th>状态</th><th>时间</th><th>通过/失败</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    listEl.querySelectorAll('.unilog-row').forEach((tr) => {
+      tr.addEventListener('click', () => {
+        loadUnifiedLogDetail(tr.getAttribute('data-module'), tr.getAttribute('data-task-id'));
+      });
+    });
+    listEl.querySelectorAll('.unilog-dl').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const m = btn.getAttribute('data-module');
+        const t = btn.getAttribute('data-task-id');
+        window.open(`/api/${m}/results/${t}/log`, '_blank');
+      });
+    });
+  }
+
+  async function loadUnifiedLogs() {
+    if (!PHASE1_ENABLED) return;
+    const listEl = document.getElementById('logs-list');
+    if (listEl) listEl.innerHTML = '<p class="text-slate-400">加载中...</p>';
+    try {
+      const [dcgmi, ib, eth] = await Promise.all([
+        apiGet('/api/dcgmi/results').catch(() => []),
+        apiGet('/api/ib/results').catch(() => []),
+        apiGet('/api/eth/results').catch(() => []),
+      ]);
+      unifiedLogs = [
+        ...normalizeUnifiedLogs('dcgmi', dcgmi),
+        ...normalizeUnifiedLogs('ib', ib),
+        ...normalizeUnifiedLogs('eth', eth),
+      ].sort((a, b) => b.started_sort - a.started_sort);
+      renderUnifiedLogsTable();
+    } catch (err) {
+      if (listEl) showFeedback(listEl, err.message || '加载失败', 'error');
+    }
+  }
+
+  function bindUnifiedLogsControls() {
+    if (logsBound || !PHASE1_ENABLED) return;
+    logsBound = true;
+    ['logs-filter-module', 'logs-filter-status', 'logs-filter-keyword'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener(id === 'logs-filter-keyword' ? 'input' : 'change', renderUnifiedLogsTable);
+    });
+    const btn = document.getElementById('btn-logs-refresh');
+    if (btn) btn.addEventListener('click', loadUnifiedLogs);
+  }
+
+  async function loadUnifiedLogDetail(moduleName, taskId) {
+    const detailEl = document.getElementById('logs-detail');
+    if (!detailEl) return;
+    detailEl.innerHTML = '<p class="text-slate-400">加载中...</p>';
+    try {
+      const summary = await apiGet(`/api/${moduleName}/results/${taskId}/summary`);
+      let html = `<h4 class="text-md font-bold mb-2">任务详情: ${escapeHtml(taskId)} (${escapeHtml(moduleName.toUpperCase())})</h4>`;
+      if (moduleName === 'dcgmi') html += renderDcgmiBatchSummary(summary);
+      else if (moduleName === 'ib') html += renderBatchSummary(summary);
+      else html += renderEthBatchSummary(summary);
+      detailEl.innerHTML = html;
+    } catch (err) {
+      showFeedback(detailEl, err.message || '加载详情失败', 'error');
+    }
+  }
+
+  // ---- One-click pipeline
+  let oneclickBound = false;
+  let oneclickState = {
+    running: false,
+    stopRequested: false,
+    activeTask: null,
+    activeStep: null,
+    elapsedTimer: null,
+    startMs: 0,
+  };
+
+  function initOneclickPanel() {
+    if (!PHASE1_ENABLED || oneclickBound) return;
+    oneclickBound = true;
+    const startBtn = document.getElementById('btn-oneclick-start');
+    const stopBtn = document.getElementById('btn-oneclick-stop');
+    if (startBtn) startBtn.addEventListener('click', startOneclickRun);
+    if (stopBtn) {
+      stopBtn.addEventListener('click', () => {
+        if (!oneclickState.running) return;
+        oneclickState.stopRequested = true;
+        stopBtn.disabled = true;
+        if (oneclickState.activeStep === 'eth' && oneclickState.activeTask) {
+          fetch(`/api/eth/batch/${oneclickState.activeTask}/cancel`, { method: 'POST' }).catch(() => {});
+        }
+      });
+    }
+    renderOneclickSteps();
+  }
+
+  function renderOneclickSteps() {
+    const el = document.getElementById('oneclick-steps');
+    if (!el) return;
+    const mk = (id, title) => `<div class="phase1-step" id="oneclick-step-${id}">
+      <div class="phase1-step-head">
+        <span class="phase1-step-title">${escapeHtml(title)}</span>
+        <span class="phase1-step-status" id="oneclick-step-${id}-status">未开始</span>
+      </div>
+      <div class="phase1-step-detail" id="oneclick-step-${id}-detail">-</div>
+    </div>`;
+    el.innerHTML = mk('ping', 'Step 1: PING') + mk('eth', 'Step 2: 以太网') + mk('dcgmi', 'Step 3: DCGMI') + mk('ib', 'Step 4: IB');
+  }
+
+  function setOneclickStep(step, status, detail) {
+    const sEl = document.getElementById(`oneclick-step-${step}-status`);
+    const dEl = document.getElementById(`oneclick-step-${step}-detail`);
+    const card = document.getElementById(`oneclick-step-${step}`);
+    if (sEl) sEl.textContent = status;
+    if (dEl) dEl.textContent = detail || '-';
+    if (card) {
+      card.classList.remove('step-running', 'step-ok', 'step-fail', 'step-skip');
+      if (status === '运行中') card.classList.add('step-running');
+      else if (status === '完成') card.classList.add('step-ok');
+      else if (status === '失败') card.classList.add('step-fail');
+      else if (status === '跳过') card.classList.add('step-skip');
+    }
+  }
+
+  function setOneclickRunningUi(running) {
+    const startBtn = document.getElementById('btn-oneclick-start');
+    const stopBtn = document.getElementById('btn-oneclick-stop');
+    if (startBtn) startBtn.disabled = running;
+    if (stopBtn) {
+      if (running) {
+        stopBtn.classList.remove('hidden');
+        stopBtn.disabled = false;
+      } else {
+        stopBtn.classList.add('hidden');
+      }
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function runOneclickPingStep() {
+    const hostData = await apiGet('/api/hosts');
+    const hosts = hostData.hosts || [];
+    const pingRows = await mapLimit(hosts, 10, async (h) => {
+      try {
+        const p = await apiGet(`/api/hosts/${h.id}/ping`);
+        return !!p.online;
+      } catch (_) {
+        return false;
+      }
+    });
+    const online = pingRows.filter(Boolean).length;
+    return { total: hosts.length, online, offline: hosts.length - online };
+  }
+
+  async function runAndPollBatch(startPath, payload, statusPathBuilder, kind) {
+    const startResp = await apiPost(startPath, payload);
+    const taskId = startResp.task_id;
+    oneclickState.activeTask = taskId;
+    while (true) {
+      if (oneclickState.stopRequested && kind !== 'eth') {
+        return { status: 'detached', task_id: taskId };
+      }
+      const s = await apiGet(statusPathBuilder(taskId));
+      if (s.status === 'running') {
+        let detail = '运行中';
+        if (typeof s.completed_pairs === 'number') detail = `${s.completed_pairs}/${s.total_pairs || '?'} 对`;
+        if (typeof s.completed_hosts === 'number') detail = `${s.completed_hosts}/${s.total_hosts || '?'} 台`;
+        if (kind === 'eth') setOneclickStep('eth', '运行中', detail);
+        if (kind === 'dcgmi') setOneclickStep('dcgmi', '运行中', detail);
+        if (kind === 'ib') setOneclickStep('ib', '运行中', detail);
+        if (oneclickState.stopRequested && kind === 'eth') {
+          fetch(`/api/eth/batch/${taskId}/cancel`, { method: 'POST' }).catch(() => {});
+        }
+        await sleep(3000);
+        continue;
+      }
+      return { ...s, task_id: taskId };
+    }
+  }
+
+  async function startOneclickRun() {
+    if (oneclickState.running) return;
+    initOneclickPanel();
+    renderOneclickSteps();
+    const summaryEl = document.getElementById('oneclick-summary');
+    if (summaryEl) summaryEl.innerHTML = '';
+    const enableIb = !!document.getElementById('oneclick-enable-ib')?.checked;
+    const ibType = document.getElementById('oneclick-ib-type')?.value || 'bandwidth';
+    const ibBidir = !!document.getElementById('oneclick-ib-bidir')?.checked;
+    const ethMode = document.getElementById('oneclick-eth-mode')?.value || 'fullmesh';
+    const dcgmiLevel = Number(document.getElementById('oneclick-dcgmi-level')?.value || 1);
+
+    oneclickState.running = true;
+    oneclickState.stopRequested = false;
+    oneclickState.activeTask = null;
+    oneclickState.activeStep = null;
+    oneclickState.startMs = Date.now();
+    setOneclickRunningUi(true);
+    const elapsedEl = document.getElementById('oneclick-elapsed');
+    if (oneclickState.elapsedTimer) clearInterval(oneclickState.elapsedTimer);
+    oneclickState.elapsedTimer = setInterval(() => {
+      if (!elapsedEl) return;
+      elapsedEl.textContent = `总耗时：${Math.floor((Date.now() - oneclickState.startMs) / 1000)} 秒`;
+    }, 1000);
+
+    let hadFailure = false;
+    try {
+      oneclickState.activeStep = 'ping';
+      setOneclickStep('ping', '运行中', '正在探测所有设备');
+      try {
+        const ping = await runOneclickPingStep();
+        setOneclickStep('ping', '完成', `在线 ${ping.online}/${ping.total}，离线 ${ping.offline}`);
+      } catch (e) {
+        hadFailure = true;
+        setOneclickStep('ping', '失败', e.message || 'PING 阶段失败');
+      }
+      if (oneclickState.stopRequested) {
+        setOneclickStep('eth', '跳过', '用户停止后续步骤');
+        setOneclickStep('dcgmi', '跳过', '用户停止后续步骤');
+        setOneclickStep('ib', '跳过', '用户停止后续步骤');
+        return;
+      }
+
+      oneclickState.activeStep = 'eth';
+      setOneclickStep('eth', '运行中', '正在启动批量以太网测试');
+      try {
+        const ethStatus = await runAndPollBatch('/api/eth/batch', { mode: ethMode }, (tid) => `/api/eth/batch/${tid}/status`, 'eth');
+        if (ethStatus.status === 'completed' || ethStatus.status === 'cancelled') {
+          setOneclickStep('eth', '完成', ethStatus.status === 'cancelled' ? '任务被停止（已保存部分结果）' : '批量测试完成');
+        } else if (ethStatus.status === 'detached') {
+          setOneclickStep('eth', '跳过', '已停止轮询，后台继续执行');
+        } else {
+          hadFailure = true;
+          setOneclickStep('eth', '失败', ethStatus.error || '任务失败');
+        }
+      } catch (e) {
+        hadFailure = true;
+        setOneclickStep('eth', '失败', e.message || '以太网阶段失败');
+      }
+      if (oneclickState.stopRequested) {
+        setOneclickStep('dcgmi', '跳过', '用户停止后续步骤');
+        setOneclickStep('ib', '跳过', '用户停止后续步骤');
+        return;
+      }
+
+      oneclickState.activeStep = 'dcgmi';
+      setOneclickStep('dcgmi', '运行中', `Level ${dcgmiLevel}`);
+      try {
+        const dcgmiStatus = await runAndPollBatch('/api/dcgmi/batch', { level: dcgmiLevel }, (tid) => `/api/dcgmi/batch/${tid}/status`, 'dcgmi');
+        if (dcgmiStatus.status === 'completed') setOneclickStep('dcgmi', '完成', '批量诊断完成');
+        else if (dcgmiStatus.status === 'detached') setOneclickStep('dcgmi', '跳过', '已停止轮询，后台继续执行');
+        else {
+          hadFailure = true;
+          setOneclickStep('dcgmi', '失败', dcgmiStatus.error || '任务失败');
+        }
+      } catch (e) {
+        hadFailure = true;
+        setOneclickStep('dcgmi', '失败', e.message || 'DCGMI 阶段失败');
+      }
+      if (oneclickState.stopRequested) {
+        setOneclickStep('ib', '跳过', '用户停止后续步骤');
+        return;
+      }
+
+      if (!enableIb) {
+        setOneclickStep('ib', '跳过', '配置为不执行 IB 测试');
+      } else {
+        oneclickState.activeStep = 'ib';
+        setOneclickStep('ib', '运行中', '正在启动批量测试');
+        try {
+          const ibStatus = await runAndPollBatch('/api/ib/test/batch', { test_type: ibType, bidirectional: ibBidir }, (tid) => `/api/ib/test/batch/${tid}/status`, 'ib');
+          if (ibStatus.status === 'completed') setOneclickStep('ib', '完成', '批量测试完成');
+          else if (ibStatus.status === 'detached') setOneclickStep('ib', '跳过', '已停止轮询，后台继续执行');
+          else {
+            hadFailure = true;
+            setOneclickStep('ib', '失败', ibStatus.error || '任务失败');
+          }
+        } catch (e) {
+          hadFailure = true;
+          setOneclickStep('ib', '失败', e.message || 'IB 阶段失败');
+        }
+      }
+    } catch (err) {
+      if (summaryEl) showFeedback(summaryEl, err.message || '一键巡检失败', 'error');
+    } finally {
+      oneclickState.running = false;
+      oneclickState.activeTask = null;
+      oneclickState.activeStep = null;
+      if (oneclickState.elapsedTimer) clearInterval(oneclickState.elapsedTimer);
+      oneclickState.elapsedTimer = null;
+      setOneclickRunningUi(false);
+      if (summaryEl) {
+        if (oneclickState.stopRequested) showFeedback(summaryEl, '已停止后续步骤。已启动任务可能仍在后台执行。', 'info');
+        else if (hadFailure) showFeedback(summaryEl, '一键巡检已结束，部分阶段失败，请查看步骤详情。', 'info');
+        else showFeedback(summaryEl, '一键巡检流程执行结束。', 'success');
+      }
+    }
+  }
+
+  // =========================================================================
   // Init
   // =========================================================================
 
+  applyPhase1Visibility();
+  bindUnifiedLogsControls();
   setupUploadDnD();
   setSelectedHostBadge();
   showPanel('import');

@@ -25,10 +25,11 @@
         <button class="panel-switch" data-panel="import">导入 Excel</button>
         <button class="panel-switch" data-panel="hosts">设备列表</button>
         <button class="panel-switch" data-panel="connectivity">连通性检查</button>
+        <button class="panel-switch phase1-feature" data-panel="dashboard">GPU仪表盘</button>
 
         <div class="nav-group">
           <button class="nav-group-toggle panel-switch" data-group="gpu-group">
-            <span class="nav-arrow">&#9654;</span> GPU 检查
+            GPU 检查 <span class="nav-arrow">&#9654;</span>
           </button>
           <div class="nav-group-items collapsed" id="gpu-group">
             <button class="panel-switch-sub" data-panel="numa">GPU 拓扑</button>
@@ -40,7 +41,7 @@
 
         <div class="nav-group">
           <button class="nav-group-toggle panel-switch" data-group="ib-group">
-            <span class="nav-arrow">&#9654;</span> InfiniBand
+            InfiniBand <span class="nav-arrow">&#9654;</span>
           </button>
           <div class="nav-group-items collapsed" id="ib-group">
             <button class="panel-switch-sub" data-panel="ib-topo">IB 拓扑</button>
@@ -50,6 +51,8 @@
         </div>
 
         <button class="panel-switch" data-panel="eth-test">以太网测试</button>
+        <button class="panel-switch phase1-feature" data-panel="oneclick">一键巡检</button>
+        <button class="panel-switch phase1-feature" data-panel="logs">日志中心</button>
       </nav>
     </aside>
 
@@ -82,7 +85,10 @@
           <p class="font-semibold text-slate-100">拖拽 Excel 文件到此处</p>
           <p class="text-sm text-slate-400 mt-1">或点击下方按钮选择文件（.xlsx / .xls）</p>
           <input type="file" id="excel-file" class="hidden" accept=".xlsx,.xls">
-          <button type="button" id="btn-pick-file" class="mt-4 px-4 py-2 rounded-lg bg-slate-800 border border-slate-600 text-slate-200 hover:border-cyan-400">选择文件</button>
+          <div class="mt-4 flex items-center justify-center gap-2 flex-wrap">
+            <button type="button" id="btn-pick-file" class="px-4 py-2 rounded-lg bg-slate-800 border border-slate-600 text-slate-200 hover:border-cyan-400">选择文件</button>
+            <a id="btn-export-template" href="/api/hosts/template" class="px-4 py-2 rounded-lg bg-slate-900/70 border border-cyan-500/40 text-cyan-200 hover:border-cyan-300 inline-flex items-center">导出模板</a>
+          </div>
           <p id="selected-file-name" class="text-xs text-slate-400 mt-3">尚未选择文件</p>
         </div>
 
@@ -103,6 +109,95 @@
         <p class="text-slate-400 mb-4 text-sm">对所有已导入设备进行 PING 连通性批量检测，列出不可达设备。</p>
         <button type="button" id="btn-connectivity-check" class="glow-btn px-6 py-2.5 rounded-xl font-semibold mb-4">开始检测</button>
         <div id="connectivity-result"></div>
+      </section>
+
+      <section id="panel-dashboard" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl phase1-feature">
+        <h2 class="text-2xl font-extrabold mb-2">实时 GPU 仪表盘</h2>
+        <p class="text-slate-400 mb-4 text-sm">汇总所有 GPU/CPU 主机在线情况与 GPU 关键指标，支持自动刷新与风险快速定位。</p>
+        <div class="phase1-toolbar mb-4">
+          <div class="phase1-actions">
+            <button type="button" id="btn-dashboard-refresh" class="glow-btn px-4 py-2 rounded-xl font-semibold">立即刷新</button>
+            <button type="button" id="btn-dashboard-toggle" class="px-4 py-2 rounded-xl font-semibold border border-slate-500/50 text-slate-200 hover:border-cyan-400/50">暂停自动刷新</button>
+          </div>
+          <div id="dashboard-last-update" class="text-xs text-slate-400">最近刷新：尚未开始</div>
+        </div>
+        <div id="dashboard-summary" class="topo-summary-grid mb-4"></div>
+        <div class="grid lg:grid-cols-3 gap-4">
+          <div class="phase1-card">
+            <h3 class="phase1-card-title">温度 Top 5</h3>
+            <div id="dashboard-top-temp"></div>
+          </div>
+          <div class="phase1-card">
+            <h3 class="phase1-card-title">显存占用 Top 5</h3>
+            <div id="dashboard-top-mem"></div>
+          </div>
+          <div class="phase1-card">
+            <h3 class="phase1-card-title">GPU 利用率 Top 5</h3>
+            <div id="dashboard-top-util"></div>
+          </div>
+        </div>
+        <div id="dashboard-errors" class="mt-4"></div>
+      </section>
+
+      <section id="panel-logs" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl phase1-feature">
+        <h2 class="text-2xl font-extrabold mb-2">统一日志中心</h2>
+        <p class="text-slate-400 mb-4 text-sm">统一查看 DCGMI / IB / 以太网历史任务，支持筛选、详情查看与日志下载。</p>
+        <div class="phase1-filter-row mb-4">
+          <select id="logs-filter-module" class="ib-select">
+            <option value="all">全部模块</option>
+            <option value="dcgmi">DCGMI</option>
+            <option value="ib">InfiniBand</option>
+            <option value="eth">以太网</option>
+          </select>
+          <select id="logs-filter-status" class="ib-select">
+            <option value="all">全部状态</option>
+            <option value="completed">completed</option>
+            <option value="running">running</option>
+            <option value="cancelled">cancelled</option>
+            <option value="failed">failed</option>
+          </select>
+          <input id="logs-filter-keyword" class="ib-select phase1-input" type="text" placeholder="搜索任务ID / 主机 / IP">
+          <button type="button" id="btn-logs-refresh" class="glow-btn px-4 py-2 rounded-xl font-semibold">刷新</button>
+        </div>
+        <div id="logs-list"></div>
+        <div id="logs-detail" class="mt-4"></div>
+      </section>
+
+      <section id="panel-oneclick" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl phase1-feature">
+        <h2 class="text-2xl font-extrabold mb-2">一键全链路巡检</h2>
+        <p class="text-slate-400 mb-4 text-sm">按流水线执行 PING、以太网、DCGMI、IB 检查，并持续展示进度和运行时间。</p>
+
+        <div class="phase1-filter-row mb-4">
+          <select id="oneclick-eth-mode" class="ib-select">
+            <option value="fullmesh">以太网：全网格</option>
+            <option value="sequential" selected>以太网：顺序配对</option>
+          </select>
+          <select id="oneclick-dcgmi-level" class="ib-select">
+            <option value="1">DCGMI：Level 1</option>
+            <option value="2">DCGMI：Level 2</option>
+          </select>
+          <label class="phase1-check">
+            <input type="checkbox" id="oneclick-enable-ib" checked class="accent-cyan-400">
+            <span>包含 IB 测试</span>
+          </label>
+          <select id="oneclick-ib-type" class="ib-select">
+            <option value="bandwidth">IB：带宽</option>
+            <option value="latency">IB：延迟</option>
+          </select>
+          <label class="phase1-check">
+            <input type="checkbox" id="oneclick-ib-bidir" class="accent-cyan-400">
+            <span>IB 双向</span>
+          </label>
+        </div>
+
+        <div class="phase1-actions mb-4">
+          <button type="button" id="btn-oneclick-start" class="glow-btn px-5 py-2 rounded-xl font-semibold">开始一键巡检</button>
+          <button type="button" id="btn-oneclick-stop" class="px-5 py-2 rounded-xl font-semibold border border-rose-400/50 text-rose-300 hover:bg-rose-500/10 hidden">停止后续步骤</button>
+          <div id="oneclick-elapsed" class="text-sm text-slate-400">总耗时：0 秒</div>
+        </div>
+
+        <div id="oneclick-steps" class="phase1-steps"></div>
+        <div id="oneclick-summary" class="mt-4"></div>
       </section>
 
       <section id="panel-numa" class="panel glass-card p-6 md:p-8 rounded-2xl shadow-2xl">
@@ -319,7 +414,7 @@
               <label class="text-xs text-slate-400 block mb-1">测试模式</label>
               <select id="eth-batch-mode" class="bg-slate-800 border border-slate-600 text-slate-200 text-sm rounded-lg px-3 py-2 min-w-[180px]">
                 <option value="fullmesh">全网格 (Full Mesh)</option>
-                <option value="sequential">顺序配对</option>
+                <option value="sequential" selected>顺序配对</option>
               </select>
             </div>
             <div>

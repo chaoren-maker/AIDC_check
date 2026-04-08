@@ -743,7 +743,7 @@ body {
 .nav-group-toggle.panel-switch {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
 }
 
 .nav-arrow {
@@ -842,4 +842,130 @@ body {
   color: #fcd34d;
   background: rgba(251, 191, 36, 0.08);
   border-left: 2px solid rgba(251, 191, 36, 0.5);
+}
+
+/* Phase1 panels */
+.phase1-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.phase1-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.phase1-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.phase1-input {
+  min-width: 220px;
+}
+
+.phase1-card {
+  background: rgba(2, 6, 23, 0.45);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.phase1-card-title {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.dash-row {
+  cursor: pointer;
+}
+
+.dash-row:hover {
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.unilog-row {
+  cursor: pointer;
+}
+
+.unilog-row:hover {
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.phase1-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 13px;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  border-radius: 10px;
+  padding: 7px 10px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.phase1-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.phase1-step {
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(2, 6, 23, 0.4);
+}
+
+.phase1-step-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.phase1-step-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.phase1-step-status {
+  font-size: 12px;
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.phase1-step-detail {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.phase1-step.step-running {
+  border-color: rgba(34, 211, 238, 0.45);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.18);
+}
+
+.phase1-step.step-ok {
+  border-color: rgba(74, 222, 128, 0.45);
+}
+
+.phase1-step.step-fail {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.phase1-step.step-skip {
+  border-color: rgba(251, 191, 36, 0.45);
 }
