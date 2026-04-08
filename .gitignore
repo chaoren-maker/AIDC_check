@@ -41,6 +41,7 @@ eth_test_results/
 hanggang_gpu.xlsx
 iblinkinfo.txt
 RDMA_400G_环境部署与性能测试手册.md
+image/
 
 # IDE / OS
 .DS_Store
