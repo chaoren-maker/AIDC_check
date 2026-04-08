@@ -5,6 +5,9 @@ All require host_id and use SSH; return clear errors for unknown host or SSH fai
 
 from fastapi import APIRouter, HTTPException
 
+from app.mock_data import gpu_inspection as mock_gpu_inspection
+from app.mock_data import gpu_metrics as mock_gpu_metrics
+from app.mock_data import is_mock_enabled
 from app.remote.gpu_metrics import fetch_gpu_metrics, run_inspection
 from app.remote.numa import fetch_numa_topology
 from app.remote.versions import fetch_all_versions, fetch_gpu_versions, fetch_nic_firmware, fetch_server_os_version
@@ -83,6 +86,11 @@ async def get_versions_server(host_id: str):
 @router.get("/{host_id}/gpu/metrics")
 async def get_gpu_metrics(host_id: str):
     """Get current GPU metrics (temperature, memory, utilization) for the given host."""
+    if is_mock_enabled():
+        try:
+            return mock_gpu_metrics(host_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
     hid = _host_id_from_path(host_id)
     try:
         return fetch_gpu_metrics(hid)
@@ -95,6 +103,11 @@ async def get_gpu_metrics(host_id: str):
 @router.get("/{host_id}/gpu/inspection")
 async def get_gpu_inspection(host_id: str):
     """Run GPU inspection on the given host; returns per-GPU status and summary."""
+    if is_mock_enabled():
+        try:
+            return mock_gpu_inspection(host_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
     hid = _host_id_from_path(host_id)
     try:
         return run_inspection(hid)

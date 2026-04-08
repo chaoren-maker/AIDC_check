@@ -1886,6 +1886,23 @@
     });
   }
 
+  async function initMockModeBadge() {
+    const badge = document.getElementById('mock-mode-badge');
+    if (!badge) return;
+    try {
+      const status = await apiGet('/api/mock/status');
+      if (status && status.enabled) {
+        badge.classList.remove('hidden');
+        const scenario = status.scenario ? ` (${status.scenario})` : '';
+        badge.textContent = `Mock 模式${scenario}`;
+      } else {
+        badge.classList.add('hidden');
+      }
+    } catch (_) {
+      badge.classList.add('hidden');
+    }
+  }
+
   // ---- Dashboard
   let dashboardTimer = null;
   let dashboardPaused = false;
@@ -2411,6 +2428,7 @@
   // =========================================================================
 
   applyPhase1Visibility();
+  initMockModeBadge();
   bindUnifiedLogsControls();
   setupUploadDnD();
   setSelectedHostBadge();

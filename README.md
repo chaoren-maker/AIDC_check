@@ -68,6 +68,50 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
+## 无 GPU 演示模式（Mock）
+
+如果当前没有可用 GPU/IB/以太网测试环境，可以启用内置 Mock 模式，快速演示并验证页面与流程效果（仪表盘、日志中心、一键巡检等）。
+
+### 这个模式是做什么的
+
+- 在后端返回可控的模拟数据，不依赖真实 GPU 设备
+- 覆盖主机列表、PING、GPU 指标、DCGMI、IB、以太网测试与历史记录
+- 便于演示 UI 效果、联调前端逻辑、培训操作流程
+
+### 如何开启
+
+```bash
+# 默认场景（warning）
+AIDC_MOCK_MODE=1 ./run.sh
+
+# 指定场景
+AIDC_MOCK_MODE=1 AIDC_MOCK_SCENARIO=healthy ./run.sh
+AIDC_MOCK_MODE=1 AIDC_MOCK_SCENARIO=warning ./run.sh
+AIDC_MOCK_MODE=1 AIDC_MOCK_SCENARIO=degraded ./run.sh
+```
+
+可选场景说明：
+- `healthy`：大多数测试 PASS
+- `warning`：部分告警/失败（默认）
+- `degraded`：失败更多，便于验证异常处理与告警展示
+
+### 如何确认已生效
+
+- 页面左侧标题区域会显示 `Mock 模式` 标识
+- 接口 `GET /api/mock/status` 返回 `enabled: true`
+
+### 如何回退到真实环境
+
+```bash
+./run.sh
+```
+
+即不设置 `AIDC_MOCK_MODE`，重启服务后恢复真实 SSH/设备采集逻辑。
+
+> 注意：Mock 模式仅用于演示和联调，不代表真实硬件健康状态与网络性能结果。
+
+---
+
 ## Excel 主机表格式
 
 | 列名 | 必填 | 说明 |

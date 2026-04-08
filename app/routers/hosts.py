@@ -20,6 +20,7 @@ from app.host_store import (
     resolve_host,
     update_host,
 )
+from app.mock_data import get_host_or_raise, is_mock_enabled, list_hosts_safe, ping_host as mock_ping_host
 
 KEYS_DIR = Path(__file__).resolve().parent.parent.parent / "ssh_keys"
 
@@ -29,12 +30,16 @@ router = APIRouter(prefix="/api/hosts", tags=["hosts"])
 @router.get("")
 async def list_hosts():
     """Return current loaded host list (no passwords, no key paths)."""
+    if is_mock_enabled():
+        return {"hosts": list_hosts_safe()}
     return {"hosts": get_hosts_safe()}
 
 
 @router.post("/import")
 async def import_hosts(file: UploadFile = File(...)):
     """Upload Excel file to load GPU host list."""
+    if is_mock_enabled():
+        return {"hosts": list_hosts_safe(), "message": "Mock mode enabled: loaded built-in demo hosts."}
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(
             status_code=400,
@@ -118,6 +123,9 @@ async def export_hosts_template():
 @router.delete("/{host_id}")
 async def delete_host(host_id: int):
     """Remove a single host from the loaded list."""
+    if is_mock_enabled():
+        _ = get_host_or_raise(host_id)
+        return {"message": f"Mock mode: host {host_id} is read-only", "hosts": list_hosts_safe()}
     if not remove_host(host_id):
         raise HTTPException(status_code=404, detail=f"Host not found: {host_id}")
     return {"message": f"Host {host_id} removed", "hosts": get_hosts_safe()}
@@ -126,6 +134,8 @@ async def delete_host(host_id: int):
 @router.delete("")
 async def delete_all_hosts():
     """Clear all loaded hosts."""
+    if is_mock_enabled():
+        return {"message": "Mock mode: demo hosts are read-only", "hosts": list_hosts_safe()}
     count = clear_hosts()
     return {"message": f"Cleared {count} host(s)", "hosts": []}
 
@@ -133,6 +143,12 @@ async def delete_all_hosts():
 @router.get("/{host_id}/ping")
 async def ping_host(host_id: int):
     """Quick ICMP ping reachability check. Returns online status."""
+    if is_mock_enabled():
+        try:
+            online = mock_ping_host(host_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"host_id": host_id, "online": online}
     host = resolve_host(host_id)
     if not host:
         raise HTTPException(status_code=404, detail=f"Host not found: {host_id}")

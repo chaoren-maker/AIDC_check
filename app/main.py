@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from app.mock_data import mock_status_payload
 from app.routers import dcgmi as dcgmi_router
 from app.routers import eth as eth_router
 from app.routers import hosts as hosts_router
@@ -64,6 +65,12 @@ async def serve_index():
 async def health() -> dict:
     """Health check for deployment/monitoring."""
     return {"status": "healthy"}
+
+
+@app.get("/api/mock/status")
+async def mock_status() -> dict:
+    """Return mock-mode status for UI hinting."""
+    return mock_status_payload()
 
 
 app.include_router(hosts_router.router)
